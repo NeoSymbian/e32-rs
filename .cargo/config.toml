@@ -4,4 +4,4 @@
 #   cargo arm    the Symbian staticlibs: target/armv5te-none-eabi/release/lib*.a (core built from source: tier 3)
 #   cargo test   host unit tests of the pure parts (e32-sys, e32)
 [alias]
-arm = "build --release --target armv5te-none-eabi -Zbuild-std=core,compiler_builtins -Zbuild-std-features=compiler-builtins-mem"
+arm = "build --release --target armv5te-none-eabi -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem"

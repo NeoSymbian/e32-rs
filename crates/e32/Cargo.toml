@@ -8,3 +8,7 @@ description = "Safe Rust API over EKA2 executive calls: debug output, exit, pani
 
 [dependencies]
 e32-sys.workspace = true
+
+# the heap behind `alloc` exists only on the Symbian target
+[target.'cfg(target_arch = "arm")'.dependencies]
+linked_list_allocator = { version = "=0.10.6", default-features = false }

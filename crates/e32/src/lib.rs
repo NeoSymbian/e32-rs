@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The Rust side of a Symbian EXE: debug output, exit, panic, and the `E32Main` entry point, all on executive calls.
+//! The Rust side of a Symbian EXE, all on executive calls: debug output, exit, panic, `E32Main`, a heap for `alloc`,
+//! request waiting, timers, a small async runtime, threads, locks, client-server IPC and a file-server client.
 //!
 //! ```ignore
 //! #![no_std]
@@ -11,7 +12,19 @@
 //! ```
 #![cfg_attr(not(test), no_std)]
 
+extern crate alloc;
+
 pub use e32_sys as sys;
+
+pub mod fs;
+#[cfg(target_arch = "arm")]
+pub mod heap;
+pub mod ipc;
+pub mod request;
+pub mod rt;
+pub mod sync;
+pub mod thread;
+pub mod time;
 
 pub mod debug {
     use crate::sys;
@@ -133,13 +146,20 @@ pub fn on_panic(info: &core::panic::PanicInfo) -> ! {
     process::panic(PANIC_CATEGORY, 0)
 }
 
-/// Make `fn() -> i32` the EXE's `E32Main` (the Symbian start-up code calls it, then `User::Exit` with its result)
-/// and install the panic handler.
+/// Set up what the Rust side needs before `main` runs: the heap behind `alloc`. Called by [`main!`].
+pub fn init() {
+    #[cfg(target_arch = "arm")]
+    heap::init();
+}
+
+/// Make `fn() -> i32` the EXE's `E32Main` (the Symbian start-up code calls it, then `User::Exit` with its result),
+/// set up the heap, and install the panic handler.
 #[macro_export]
 macro_rules! main {
     ($main:path) => {
         #[unsafe(export_name = "_Z7E32Mainv")]
         pub extern "C" fn __e32_main() -> i32 {
+            $crate::init();
             $main()
         }
 

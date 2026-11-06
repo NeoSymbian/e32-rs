@@ -44,7 +44,7 @@ jobs:
           cargo test -p e32-sys -p e32
           cargo arm
           mkdir -p ../symbian-2010/rust
-          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic}.a ../symbian-2010/rust/
+          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic,libneotest}.a ../symbian-2010/rust/
           cp symbian/exes.txt ../symbian-2010/rust/
 
       - name: Fetch the Symbian sources
@@ -55,9 +55,9 @@ jobs:
         working-directory: symbian-2010
         run: ./build.sh
 
-      - name: Boot and run neohello, neor1, neopanic
+      - name: Boot and run neohello, neor1, neopanic, neotest, neor1c (from C:)
         working-directory: symbian-2010
-        run: RUN=neohello,neor1,neopanic ./boot.sh
+        run: RUN=neohello,neor1,neopanic,neotest,neor1c SECS=200 ./boot.sh
 
       - name: Check the output
         working-directory: symbian-2010
@@ -73,6 +73,11 @@ jobs:
           grep -a "\[EKERN\] exit 'NEOR1.EXE.*reason=0x0000002a" $s
           grep -a 'rust panic: deliberate panic 7' $s
           grep -a "\[EKERN\] panic in 'NEOPANIC.EXE.*category='RUST'" $s
+          # R2: heap, timers, async, threads, locks, file-server IPC; an EXE loaded from C:
+          for t in alloc timer async threads semaphore fs; do grep -a "test $t ... ok" $s; done
+          grep -a 'neotest: 6 passed, 0 failed' $s
+          ! grep -aq "\[EKERN\] exit 'NEOTEST.EXE\[[0-9a-f]*\]0001::Main'" $s
+          grep -a "\[EKERN\] exit 'NEOR1C.EXE.*reason=0x0000002a" $s
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
       - uses: actions/upload-artifact@v4
