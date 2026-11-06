@@ -24,7 +24,7 @@ jobs:
       - name: Kernel exec table (execs.txt)
         run: |
           git init -q kernelhwsrv
-          git -C kernelhwsrv remote add origin https://github.com/NeoSymbian/oss.FCL.sf.os.kernelhwsrv.git
+          git -C kernelhwsrv remote add origin https://github.com/NeoSymbian/kernel.git
           git -C kernelhwsrv fetch -q --depth 1 --filter=blob:none origin main
           git -C kernelhwsrv sparse-checkout set kernel/eka/kernel
           git -C kernelhwsrv checkout -q FETCH_HEAD
