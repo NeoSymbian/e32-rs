@@ -79,7 +79,8 @@ jobs:
           grep -a "\[EKERN\] exit 'NEOR1C.EXE.*reason=0x0000002a" $s
           # R3: a Rust IPC server -- in-process with a Rust client, and as NEOSRV.EXE with the C++ client NEOCLI.EXE
           grep -a 'test ipc_server ... ok' $s
-          grep -a 'neotest: 7 passed, 0 failed' $s
+          grep -a 'test fs_dirs ... ok' $s
+          grep -a 'neotest: 8 passed, 0 failed' $s
           grep -a 'neocli: 9 passed, 0 failed' $s
           grep -a 'neosrv: done' $s
           grep -a 'neocli: server exited Kill 0' $s

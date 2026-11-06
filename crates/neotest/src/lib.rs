@@ -35,6 +35,7 @@ const TESTS: &[Test] = &[
     ("threads", threads_share_a_mutex),
     ("semaphore", semaphores_ping_pong),
     ("fs", file_round_trip),
+    ("fs_dirs", directories_and_drives),
     ("ipc_server", ipc_server),
 ];
 
@@ -173,6 +174,70 @@ fn file_round_trip() -> Outcome {
     let mut buf = [0u8; 64];
     let n = f.read_at(0, &mut buf).map_err(|e| format!("reread {e}"))?;
     ensure(&buf[..n] == DATA, || format!("reopened file has {n} bytes"))
+}
+
+/// Drives, volume size, listings (`Z:\\sys\\bin\\` too), and directory changes on C:: make, list, rename, delete.
+fn directories_and_drives() -> Outcome {
+    const DIR: &str = "C:\\neotest8\\";
+    let fs = Fs::connect().map_err(|e| format!("connect {e}"))?;
+    let drives = fs.drives().map_err(|e| format!("drives {e}"))?;
+    ensure(drives[2] != 0 && drives[25] != 0, || {
+        format!("C: {} Z: {}", drives[2], drives[25])
+    })?;
+    let c = fs.volume(2).map_err(|e| format!("volume C: {e}"))?;
+    ensure(c.size > 0 && c.free > 0 && c.free <= c.size, || {
+        format!("C: size {} free {}", c.size, c.free)
+    })?;
+    let bin = fs
+        .read_dir("Z:\\sys\\bin\\")
+        .map_err(|e| format!("list Z:\\sys\\bin {e}"))?;
+    ensure(bin.len() > 10, || format!("Z:\\sys\\bin has {}", bin.len()))?;
+    ensure(
+        bin.iter().any(|e| e.name.eq_ignore_ascii_case("euser.dll")),
+        || "no euser.dll in Z:\\sys\\bin".into(),
+    )?;
+    dprintln!(
+        "neotest: Z:\\sys\\bin has {} entries, C: {} of {} bytes free",
+        bin.len(),
+        c.free,
+        c.size
+    );
+
+    // a leftover from an interrupted run
+    let _ = fs.delete("C:\\neotest8\\b.txt");
+    let _ = fs.delete("C:\\neotest8\\a.txt");
+    let _ = fs.rmdir(DIR);
+    fs.mkdir(DIR).map_err(|e| format!("mkdir {e}"))?;
+    ensure(fs.mkdir(DIR) == Err(err::KERR_ALREADY_EXISTS), || {
+        "mkdir twice".into()
+    })?;
+    File::replace(&fs, "C:\\neotest8\\a.txt", e32::fs::mode::SHARE_EXCLUSIVE)
+        .and_then(|f| f.write(b"12345"))
+        .map_err(|e| format!("write {e}"))?;
+    let list = fs.read_dir(DIR).map_err(|e| format!("list {e}"))?;
+    ensure(
+        list.len() == 1 && list[0].name == "a.txt" && list[0].size == 5 && !list[0].is_dir(),
+        || format!("listing {list:?}"),
+    )?;
+    let root = fs.read_dir("C:\\").map_err(|e| format!("list C: {e}"))?;
+    ensure(
+        root.iter().any(|e| e.name == "neotest8" && e.is_dir()),
+        || "C:\\neotest8 not listed as a directory".into(),
+    )?;
+    fs.rename("C:\\neotest8\\a.txt", "C:\\neotest8\\b.txt")
+        .map_err(|e| format!("rename {e}"))?;
+    ensure(fs.rmdir(DIR) == Err(err::KERR_IN_USE), || {
+        "rmdir of a non-empty dir".into()
+    })?;
+    fs.delete("C:\\neotest8\\b.txt")
+        .map_err(|e| format!("delete {e}"))?;
+    fs.rmdir(DIR).map_err(|e| format!("rmdir {e}"))?;
+    let gone = fs.read_dir(DIR);
+    ensure(gone.is_err(), || format!("{DIR} still lists: {gone:?}"))?;
+    let z = fs.mkdir("Z:\\neotest8\\");
+    ensure(z == Err(err::KERR_ACCESS_DENIED), || {
+        format!("mkdir on Z: gave {z:?}")
+    })
 }
 
 /// A Rust IPC server (NeoEcho on a thread) driven by a Rust client: version refusal, two concurrent sessions with

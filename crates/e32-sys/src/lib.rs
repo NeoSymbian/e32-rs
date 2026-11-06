@@ -39,10 +39,15 @@ pub mod err {
     pub const KERR_ARGUMENT: i32 = -6;
     pub const KERR_OVERFLOW: i32 = -9;
     pub const KERR_ALREADY_EXISTS: i32 = -11;
+    pub const KERR_PATH_NOT_FOUND: i32 = -12;
+    pub const KERR_IN_USE: i32 = -14;
     pub const KERR_SERVER_TERMINATED: i32 = -15;
+    pub const KERR_ACCESS_DENIED: i32 = -21;
+    pub const KERR_EOF: i32 = -25;
     pub const KERR_BAD_NAME: i32 = -28;
     pub const KERR_TIMED_OUT: i32 = -33;
     pub const KERR_BAD_DESCRIPTOR: i32 = -38;
+    pub const KERR_PERMISSION_DENIED: i32 = -46;
 }
 
 /// `TExitType` (`e32const.h`).

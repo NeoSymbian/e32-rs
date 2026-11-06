@@ -19,8 +19,9 @@ client), and `serve` over a `Service` trait (connect with version check, per-ses
 ways on QEMU Syborg:
 
 ```
+test fs_dirs ... ok         (drives, C: volume size, Z:\sys\bin listed; on C: mkdir, list, rename, delete, rmdir)
 test ipc_server ... ok      (NeoEcho on a server thread, a Rust client with two sessions)
-neotest: 7 passed, 0 failed
+neotest: 8 passed, 0 failed
 neocli: version_refused ... ok        (NEOCLI.EXE: plain C++ RProcess/RSessionBase/TIpcArgs, another process)
 neocli: add / reverse8 / upper16 / write_at / overflow / unknown_function / session_count ... ok
 neosrv: done                          (NEOSRV.EXE, the Rust server, exits when its last session closes)
