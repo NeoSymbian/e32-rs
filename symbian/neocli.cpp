@@ -2,7 +2,7 @@
 // neocli.cpp -- NeoSymbian R3: a plain C++ Symbian client (euser only: RProcess, RSessionBase, TIpcArgs) for the
 // Rust NeoEcho server (NEOSRV.EXE, crates neosrv + neoecho). It starts the server process, waits for its rendezvous,
 // runs the same checks as neotest's ipc_server test across the process boundary, closes the session and reports how
-// the server exited (it stops when its last session closes). Built by NeoSymbian/symbian-2010 from rust/neocli.cpp
+// the server exited (it stops when its last session closes). Built by NeoSymbian/build from rust/neocli.cpp
 // with no Rust linked (manifest library `-`).
 #include <e32std.h>
 #include <e32debug.h>

@@ -1,5 +1,5 @@
-# The EXEs NeoSymbian/symbian-2010 builds from this repo's staticlibs (copy to symbian-2010/rust/ with the .a files).
-# NAME.EXE     uid3        Rust staticlib     [C++ glue, in symbian-2010] [drive=c: on C:, else the ROM]
+# The EXEs NeoSymbian/build builds from this repo's staticlibs (copy to build/rust/ with the .a files).
+# NAME.EXE     uid3        Rust staticlib     [C++ glue, in build] [drive=c: on C:, else the ROM]
 # A staticlib of `-` makes a C++-only EXE (rust/neocli.cpp is this repo's symbian/neocli.cpp, copied alongside).
 NEOHELLO.EXE   0xE0001001  librust_hello.a    toolchain/rust/neo_glue.cpp
 NEOR1.EXE      0xE0001002  libneor1.a
