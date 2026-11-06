@@ -1,0 +1,60 @@
+name: syborg
+
+# Build the Rust staticlib, link it into a Symbian EXE with NeoSymbian/symbian-2010, boot the 2010 ROM on QEMU Syborg,
+# run the EXE from ESHELL and check its output in the serial log.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  hello:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: e32-rs
+
+      - uses: actions/checkout@v4
+        with:
+          repository: NeoSymbian/symbian-2010
+          path: symbian-2010
+
+      - name: Rust (toolchain pinned by rust-toolchain.toml)
+        working-directory: e32-rs
+        run: |
+          rustup toolchain install   # reads rust-toolchain.toml
+          cargo build --release
+          mkdir -p ../symbian-2010/rust
+          cp target/armv5te-none-eabi/release/librust_hello.a ../symbian-2010/rust/
+
+      - name: Fetch the Symbian sources
+        working-directory: symbian-2010
+        run: ./fetch.sh
+
+      - name: Build the ROM with the Rust EXE
+        working-directory: symbian-2010
+        run: ./build.sh
+
+      - name: Boot and run neohello
+        working-directory: symbian-2010
+        run: RUN=neohello ./boot.sh
+
+      - name: Check the output
+        working-directory: symbian-2010
+        run: |
+          grep -a 'neo: start' out/serial.log
+          grep -a 'hello from Rust' out/serial.log
+          grep -a 'neo: rust_hello(6, 7) = 42' out/serial.log
+          ! grep -aq 'K::Fault\|Kern::Fault' out/serial.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: syborg
+          path: |
+            symbian-2010/out/fb.png
+            symbian-2010/out/serial.log
+            symbian-2010/out/log/
+            symbian-2010/out/qemu-monitor.log
