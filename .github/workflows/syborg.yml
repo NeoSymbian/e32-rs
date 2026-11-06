@@ -1,6 +1,6 @@
 name: syborg
 
-# Build the Rust staticlibs, link them into Symbian EXEs with NeoSymbian/symbian-2010, boot the 2010 ROM on QEMU
+# Build the Rust staticlibs, link them into Symbian EXEs with NeoSymbian/build, boot the 2010 ROM on QEMU
 # Syborg, run the EXEs from ESHELL and check their output in the serial log.
 on:
   push:
@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          repository: NeoSymbian/symbian-2010
+          repository: NeoSymbian/build
           path: symbian-2010
 
       - name: Kernel exec table (execs.txt)
