@@ -5,11 +5,11 @@ Rust for the Symbian EKA2 user side, part of [NeoSymbian](https://github.com/Neo
 The crates here build `no_std` Rust for the 2010 Symbian user-side ABI: 32-bit ARMv5TE with soft-float. The same
 binaries run on two platforms:
 - **now**, the 2010 ARM user side on QEMU Syborg, through
-  [NeoSymbian/symbian-2010](https://github.com/NeoSymbian/symbian-2010);
-- **later**, the Google Pixel 3a XL, once the [AArch64 kernel port](https://github.com/NeoSymbian/symbian-pixel)
+  [NeoSymbian/build](https://github.com/NeoSymbian/build);
+- **later**, the Google Pixel 3a XL, once the [AArch64 kernel port](https://github.com/NeoSymbian/kernel)
   boots the user side.
 
-The full plan is in [rust-integration.md](https://github.com/NeoSymbian/symbian-pixel/blob/main/docs/rust-integration.md).
+The full plan is in [rust-integration.md](https://github.com/NeoSymbian/docs/blob/main/rust-integration.md).
 
 ## Status
 
@@ -64,7 +64,7 @@ R1 (`NEOR1.EXE` exits 42; `NEOPANIC.EXE` panics with category `RUST`) and R0 (`N
 | `neor1`, `neopanic` | R1 test programs |
 | `rust-hello` | R0 spike, called from C++ glue |
 
-The EXEs are listed in `symbian/exes.txt` (name, uid3, staticlib or `-`, optional C++ file, optional `drive=c`), which symbian-2010's
+The EXEs are listed in `symbian/exes.txt` (name, uid3, staticlib or `-`, optional C++ file, optional `drive=c`), which NeoSymbian/build's
 `emitter/build_rust_exe.py` reads.
 
 ## Building
@@ -81,7 +81,7 @@ python3 tools/gen_execs.py ../oss.FCL.sf.os.kernelhwsrv/kernel/eka/kernel/execs.
 To run them on Syborg (needs Docker; the CI in `.github/workflows/syborg.yml` does exactly this):
 
 ```sh
-git clone https://github.com/NeoSymbian/symbian-2010 && cd symbian-2010
+git clone https://github.com/NeoSymbian/build && cd build
 mkdir -p rust && cp ../e32-rs/target/armv5te-none-eabi/release/lib*.a ../e32-rs/symbian/{exes.txt,neocli.cpp} rust/
 ./fetch.sh && ./build.sh && RUN=neohello,neor1,neopanic,neotest,neor1c,neocli SECS=220 ./boot.sh   # -> out/serial.log, out/fb.png
 ```
