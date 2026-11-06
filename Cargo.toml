@@ -1,11 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["crates/rust-hello"]
+members = ["crates/e32-sys", "crates/e32", "crates/rust-hello", "crates/neor1", "crates/neopanic"]
 
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/NeoSymbian/e32-rs"
+
+[workspace.dependencies]
+e32-sys = { path = "crates/e32-sys" }
+e32 = { path = "crates/e32" }
 
 [profile.release]
 panic = "abort"

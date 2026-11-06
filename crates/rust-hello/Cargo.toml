@@ -8,3 +8,4 @@ description = "R0 spike: a Rust function linked into a Symbian EXE, printing thr
 
 [lib]
 crate-type = ["staticlib"]
+test = false

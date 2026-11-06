@@ -1,14 +1,14 @@
 name: syborg
 
-# Build the Rust staticlib, link it into a Symbian EXE with NeoSymbian/symbian-2010, boot the 2010 ROM on QEMU Syborg,
-# run the EXE from ESHELL and check its output in the serial log.
+# Build the Rust staticlibs, link them into Symbian EXEs with NeoSymbian/symbian-2010, boot the 2010 ROM on QEMU
+# Syborg, run the EXEs from ESHELL and check their output in the serial log.
 on:
   push:
   pull_request:
   workflow_dispatch:
 
 jobs:
-  hello:
+  syborg:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -21,33 +21,59 @@ jobs:
           repository: NeoSymbian/symbian-2010
           path: symbian-2010
 
+      - name: Kernel exec table (execs.txt)
+        run: |
+          git init -q kernelhwsrv
+          git -C kernelhwsrv remote add origin https://github.com/NeoSymbian/oss.FCL.sf.os.kernelhwsrv.git
+          git -C kernelhwsrv fetch -q --depth 1 --filter=blob:none origin main
+          git -C kernelhwsrv sparse-checkout set kernel/eka/kernel
+          git -C kernelhwsrv checkout -q FETCH_HEAD
+
+      - name: Generated exec numbers are up to date
+        working-directory: e32-rs
+        run: |
+          python3 tools/gen_execs.py ../kernelhwsrv/kernel/eka/kernel/execs.txt
+          git diff --exit-code crates/e32-sys/src/execs.rs
+
       - name: Rust (toolchain pinned by rust-toolchain.toml)
         working-directory: e32-rs
         run: |
           rustup toolchain install   # reads rust-toolchain.toml
-          cargo build --release
+          cargo fmt --check
+          cargo clippy -p e32-sys -p e32 -- -D warnings
+          cargo test -p e32-sys -p e32
+          cargo arm
           mkdir -p ../symbian-2010/rust
-          cp target/armv5te-none-eabi/release/librust_hello.a ../symbian-2010/rust/
+          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic}.a ../symbian-2010/rust/
+          cp symbian/exes.txt ../symbian-2010/rust/
 
       - name: Fetch the Symbian sources
         working-directory: symbian-2010
         run: ./fetch.sh
 
-      - name: Build the ROM with the Rust EXE
+      - name: Build the ROM with the Rust EXEs
         working-directory: symbian-2010
         run: ./build.sh
 
-      - name: Boot and run neohello
+      - name: Boot and run neohello, neor1, neopanic
         working-directory: symbian-2010
-        run: RUN=neohello ./boot.sh
+        run: RUN=neohello,neor1,neopanic ./boot.sh
 
       - name: Check the output
         working-directory: symbian-2010
         run: |
-          grep -a 'neo: start' out/serial.log
-          grep -a 'hello from Rust' out/serial.log
-          grep -a 'neo: rust_hello(6, 7) = 42' out/serial.log
-          ! grep -aq 'K::Fault\|Kern::Fault' out/serial.log
+          s=out/serial.log
+          # R0: C++ E32Main calling Rust
+          grep -a 'neo: start' $s
+          grep -a 'hello from Rust' $s
+          grep -a 'neo: rust_hello(6, 7) = 42' $s
+          # R1: Rust only -- exec calls, exit code, panic
+          grep -a 'r1: hello from pure Rust' $s
+          grep -a 'r1: 6 \* 7 = 42' $s
+          grep -a "\[EKERN\] exit 'NEOR1.EXE.*reason=0x0000002a" $s
+          grep -a 'rust panic: deliberate panic 7' $s
+          grep -a "\[EKERN\] panic in 'NEOPANIC.EXE.*category='RUST'" $s
+          ! grep -aq 'K::Fault\|Kern::Fault' $s
 
       - uses: actions/upload-artifact@v4
         if: always()

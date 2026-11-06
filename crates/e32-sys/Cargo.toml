@@ -1,0 +1,7 @@
+[package]
+name = "e32-sys"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Raw EKA2 executive calls (swi) and kernel ABI types for the Symbian user side"

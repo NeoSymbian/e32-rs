@@ -3,5 +3,30 @@
 version = 4
 
 [[package]]
+name = "e32"
+version = "0.1.0"
+dependencies = [
+ "e32-sys",
+]
+
+[[package]]
+name = "e32-sys"
+version = "0.1.0"
+
+[[package]]
+name = "neopanic"
+version = "0.1.0"
+dependencies = [
+ "e32",
+]
+
+[[package]]
+name = "neor1"
+version = "0.1.0"
+dependencies = [
+ "e32",
+]
+
+[[package]]
 name = "rust-hello"
 version = "0.1.0"
