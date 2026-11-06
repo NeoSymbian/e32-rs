@@ -80,6 +80,15 @@ impl TPtr8 {
             ptr: buf.as_mut_ptr(),
         }
     }
+    /// A descriptor whose current contents are all of `buf` (length = capacity), for data the other side reads
+    /// and may write back (e.g. a `TPckg` such as the loader's `TLdrInfo`).
+    pub fn new_full(buf: &mut [u8]) -> Self {
+        Self {
+            len_type: word(EPTR, buf.len()),
+            max_len: buf.len() as i32,
+            ptr: buf.as_mut_ptr(),
+        }
+    }
     /// The length the kernel left (volatile read: it is written behind the compiler's back).
     pub fn len(&self) -> usize {
         // SAFETY: an aligned u32 inside `self`.

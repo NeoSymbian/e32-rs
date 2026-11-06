@@ -3,7 +3,10 @@
 
 use crate::request::{TRequestStatus, wait_for_request};
 use crate::sys::{self, TPtrC8, ipc};
+use core::future::Future;
 use core::marker::PhantomData;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 
 pub use crate::sys::{TIpcArgs, TVersion};
 
@@ -42,6 +45,68 @@ impl Session {
             r = wait_for_request(&status);
         }
         if r < 0 { Err(r) } else { Ok(r) }
+    }
+}
+
+impl Session {
+    /// Send a message without blocking: the future completes with the server's reply. The session must have message
+    /// slots (`connect` uses the global pool). Dropping the future before the reply blocks until it arrives — a
+    /// message cannot be withdrawn and the server may still write into `args`' descriptors.
+    pub fn send<'a>(&'a self, function: i32, args: &'a TIpcArgs<'a>) -> SendFuture<'a> {
+        SendFuture {
+            session: self,
+            function,
+            args,
+            started: false,
+            status: TRequestStatus::pending(),
+        }
+    }
+}
+
+pub struct SendFuture<'a> {
+    session: &'a Session,
+    function: i32,
+    args: &'a TIpcArgs<'a>,
+    started: bool,
+    status: TRequestStatus,
+}
+
+impl Future for SendFuture<'_> {
+    type Output = Result<i32, i32>;
+
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: nothing is moved out; `status` stays put while the message is outstanding (the future is pinned).
+        let this = unsafe { self.get_unchecked_mut() };
+        if !this.started {
+            this.status = TRequestStatus::pending();
+            // SAFETY: `args` outlives the future; `status` is inside the pinned future and Drop waits for it.
+            let r = unsafe {
+                ipc::session_send(
+                    this.session.handle,
+                    this.function,
+                    this.args,
+                    &mut this.status,
+                )
+            };
+            if r != 0 {
+                return Poll::Ready(Err(r));
+            }
+            this.started = true;
+            return Poll::Pending;
+        }
+        match this.status.get() {
+            sys::KREQUEST_PENDING => Poll::Pending,
+            r if r < 0 => Poll::Ready(Err(r)),
+            r => Poll::Ready(Ok(r)),
+        }
+    }
+}
+
+impl Drop for SendFuture<'_> {
+    fn drop(&mut self) {
+        if self.started && self.status.is_pending() {
+            wait_for_request(&self.status);
+        }
     }
 }
 

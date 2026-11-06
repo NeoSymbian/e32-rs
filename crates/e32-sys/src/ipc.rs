@@ -119,6 +119,99 @@ core::arch::global_asm!(
     n = const crate::execs::slow::SESSION_SEND_SYNC,
 );
 
+// `Exec::SessionSend` (asynchronous) is extended the same way (`uc_exec.cia:28-38`).
+#[cfg(target_arch = "arm")]
+core::arch::global_asm!(
+    ".section .text.e32_session_send,\"ax\",%progbits",
+    ".global e32_session_send",
+    ".type e32_session_send,%function",
+    ".arm",
+    "e32_session_send:",
+    "  stmfd sp!, {{r4-r8, lr}}",
+    "  movs r8, r2",
+    "  ldmne r2, {{r4-r8}}",
+    "  swi #{n}",
+    "  ldmfd sp!, {{r4-r8, pc}}",
+    ".size e32_session_send, . - e32_session_send",
+    n = const crate::execs::slow::SESSION_SEND,
+);
+
+#[cfg(target_arch = "arm")]
+unsafe extern "C" {
+    fn e32_session_send(
+        handle: TInt,
+        function: TInt,
+        args: *const TIpcArgs<'_>,
+        status: *mut TRequestStatus,
+    ) -> TInt;
+}
+
+/// `Exec::SessionSend(TInt aHandle, TInt aFunction, TAny* aArgs, TRequestStatus*)`: queue an asynchronous message
+/// (the session needs message slots: -1, the global pool, or > 0). 0 if queued; the reply arrives in `status`.
+///
+/// # Safety
+/// `args`, the descriptors it points at, and `status` (set pending first) must stay valid until completion.
+#[cfg(target_arch = "arm")]
+pub unsafe fn session_send(
+    handle: TInt,
+    function: TInt,
+    args: *const TIpcArgs<'_>,
+    status: *mut TRequestStatus,
+) -> TInt {
+    // SAFETY: forwarded caller contract.
+    unsafe { e32_session_send(handle, function, args, status) }
+}
+
+/// Host stand-in.
+///
+/// # Safety
+/// Never callable on the host.
+#[cfg(not(target_arch = "arm"))]
+pub unsafe fn session_send(
+    _: TInt,
+    _: TInt,
+    _: *const TIpcArgs<'_>,
+    _: *mut TRequestStatus,
+) -> TInt {
+    unimplemented!("SessionSend on a non-ARM host")
+}
+
+/// `TLdrInfo` (`e32ldr_private.h:67-77`), 32 bytes: what `RLoader::LoadProcess` sends in slot 0 and the loader writes
+/// back (the new process handle at +16).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TLdrInfo {
+    pub i_requested_uids: [u32; 3],
+    pub i_owner_type: TInt,
+    pub i_handle: TInt,
+    pub i_secure_id: u32,
+    pub i_requested_version: u32,
+    pub i_min_stack_size: TInt,
+}
+
+impl Default for TLdrInfo {
+    /// As `TLdrInfo::TLdrInfo()`: any UIDs, process-owned handle, any version (`KModuleVersionWild`), 8 KB stack.
+    fn default() -> Self {
+        Self {
+            i_requested_uids: [0; 3],
+            i_owner_type: 0,
+            i_handle: 0,
+            i_secure_id: 0,
+            i_requested_version: 0xFFFF_FFFE,
+            i_min_stack_size: 0x2000,
+        }
+    }
+}
+
+/// The loader server (`RLoader`): name, version 1.0.4016 (packed), and `ELoadProcess`.
+pub const LOADER_NAME: &str = "!Loader";
+pub const LOADER_VERSION: TVersion = TVersion {
+    major: 1,
+    minor: 0,
+    build: 4016,
+};
+pub const ELOAD_PROCESS: TInt = 1;
+
 #[cfg(target_arch = "arm")]
 unsafe extern "C" {
     fn e32_session_send_sync(
@@ -263,6 +356,20 @@ pub fn message_complete(msg: TInt, reason: TInt) {
     };
 }
 
+/// `Exec::MessageCompleteWithHandle(TInt aMsg, TInt aHandle)`: complete with a new handle, in the client thread, to
+/// the object `handle` (in this process) refers to; the client's request completes with that handle value.
+pub fn message_complete_with_handle(msg: TInt, handle: TInt) {
+    // SAFETY: plain integers; the kernel validates both handles.
+    unsafe {
+        crate::swi::exec4::<{ crate::execs::slow::MESSAGE_COMPLETE_WITH_HANDLE }>(
+            msg as u32,
+            handle as u32,
+            0,
+            0,
+        )
+    };
+}
+
 /// `Exec::MessageGetDesLength(TInt aMsg, TInt aParam)`: the client descriptor's length (characters) or an error.
 pub fn message_get_des_length(msg: TInt, param: TInt) -> TInt {
     // SAFETY: plain integers.
@@ -400,6 +507,20 @@ mod tests {
         let mut a = TIpcArgs::new();
         a.desc8(0, &empty).des16(1, &mut out);
         assert_eq!(a.i_flags, 6 | 5 << 3);
+    }
+
+    #[test]
+    fn loader_layout() {
+        assert_eq!(size_of::<TLdrInfo>(), 32);
+        assert_eq!(core::mem::offset_of!(TLdrInfo, i_handle), 16);
+        assert_eq!(LOADER_VERSION.packed(), 0x0FB0_0001);
+        let mut info = [0u8; 32];
+        let mut slot0 = TPtr8::new(&mut info);
+        let name = TPtrC16::new(&[0u16; 1]);
+        let cmd = TPtrC16::new(&[]);
+        let mut a = TIpcArgs::new();
+        a.des8(0, &mut slot0).desc16(1, &name).desc16(2, &cmd);
+        assert_eq!(a.i_flags, 4 | 7 << 3 | 7 << 6);
     }
 
     #[test]

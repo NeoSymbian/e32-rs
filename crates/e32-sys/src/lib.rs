@@ -269,9 +269,14 @@ pub fn timer_cancel(handle: TInt) {
 
 // ---- chunks ------------------------------------------------------------------------------------------------------
 
+/// `TChunkCreate::EGlobal` (`u32std.h:169-185`): a global chunk. Unnamed, it is "protected": not findable by name,
+/// but its handle can be passed to another process (e.g. `MessageCompleteWithHandle`), which maps it at the same
+/// address. A local chunk cannot be shared.
+pub const ECHUNK_GLOBAL: u32 = 0x10;
+
 /// `Exec::ChunkCreate(TOwnerType, const TDesC8* aName, TChunkCreate&)`: a handle or a negative error.
 pub fn chunk_create(owner: TOwnerType, info: &TChunkCreate) -> TInt {
-    // SAFETY: `info` is a valid 24-byte TChunkCreate; a null name makes a local chunk.
+    // SAFETY: `info` is a valid 24-byte TChunkCreate; a null name: unnamed (local, or protected if EGlobal).
     unsafe { exec4::<{ slow::CHUNK_CREATE }>(owner as u32, 0, info as *const _ as u32, 0) as TInt }
 }
 
@@ -331,6 +336,61 @@ pub unsafe fn thread_logon(handle: TInt, status: *mut TRequestStatus) {
 pub fn process_rendezvous(reason: TInt) {
     // SAFETY: plain integer.
     unsafe { exec4::<{ slow::PROCESS_RENDEZVOUS }>(reason as u32, 0, 0, 0) };
+}
+
+// ---- processes, time ---------------------------------------------------------------------------------------------
+
+/// `KCurrentProcessHandle` = `0xffff0000 | KHandleNoClose` (`e32const.h`).
+pub const KCURRENT_PROCESS_HANDLE: TInt = 0xFFFF_8000_u32 as TInt;
+
+/// `Exec::ProcessResume(TInt aHandle)`: start a newly loaded process.
+pub fn process_resume(handle: TInt) {
+    // SAFETY: plain integer.
+    unsafe { exec4::<{ slow::PROCESS_RESUME }>(handle as u32, 0, 0, 0) };
+}
+
+/// `Exec::ProcessLogon(TInt aHandle, TRequestStatus*, TBool aRendezvous)`: completes with the exit reason (or, with
+/// `rendezvous`, the process's `ProcessRendezvous` reason).
+///
+/// # Safety
+/// `status` (set pending first) must stay valid until it completes.
+pub unsafe fn process_logon(handle: TInt, status: *mut TRequestStatus, rendezvous: bool) {
+    // SAFETY: forwarded caller contract.
+    unsafe { exec4::<{ slow::PROCESS_LOGON }>(handle as u32, status as u32, rendezvous as u32, 0) };
+}
+
+/// `Exec::ProcessKill(TInt aHandle, TExitType, TInt aReason, const TDesC8* aCategory)` with no category.
+pub fn process_kill(handle: TInt, exit_type: TExitType, reason: TInt) {
+    // SAFETY: plain integers, null category.
+    unsafe { exec4::<{ slow::PROCESS_KILL }>(handle as u32, exit_type as u32, reason as u32, 0) };
+}
+
+/// `Exec::ProcessExitType(TInt aHandle)`: 0 Kill, 1 Terminate, 2 Panic, 3 Pending (still running).
+pub fn process_exit_type(handle: TInt) -> TInt {
+    // SAFETY: plain integer.
+    unsafe { exec4::<{ slow::PROCESS_EXIT_TYPE }>(handle as u32, 0, 0, 0) as TInt }
+}
+
+/// `Exec::ProcessExitReason(TInt aHandle)`.
+pub fn process_exit_reason(handle: TInt) -> TInt {
+    // SAFETY: plain integer.
+    unsafe { exec4::<{ slow::PROCESS_EXIT_REASON }>(handle as u32, 0, 0, 0) as TInt }
+}
+
+/// `Exec::TimeNow(TInt64& aUtc, TInt& aOffset)`: UTC in microseconds since 0001-01-01 and the UTC offset in seconds.
+pub fn time_now() -> (i64, TInt) {
+    let mut utc: i64 = 0;
+    let mut offset: TInt = 0;
+    // SAFETY: the kernel writes one TInt64 and one TInt.
+    unsafe {
+        exec4::<{ slow::TIME_NOW }>(
+            &mut utc as *mut i64 as u32,
+            &mut offset as *mut TInt as u32,
+            0,
+            0,
+        )
+    };
+    (utc, offset)
 }
 
 // ---- semaphores, mutexes -----------------------------------------------------------------------------------------

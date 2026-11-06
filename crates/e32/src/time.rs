@@ -23,6 +23,63 @@ pub fn millis() -> u64 {
     u64::from(ticks()) * u64::from(tick_period_us()) / 1000
 }
 
+/// Calendar time from the kernel's clock (`TimeNow`), local time = UTC + the kernel's UTC offset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DateTime {
+    pub year: i32,
+    /// 1-12
+    pub month: u32,
+    /// 1-31
+    pub day: u32,
+    /// 0 = Monday ... 6 = Sunday
+    pub weekday: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+}
+
+/// Days from 0000-01-01 (Symbian's `TTime` zero, nominal Gregorian) to 1970-01-01.
+const DAYS_0_TO_1970: i64 = 719_528;
+
+impl DateTime {
+    /// From a Symbian `TTime` value: microseconds since 0000-01-01 00:00.
+    pub fn from_ttime(us: i64) -> Self {
+        let secs = us.div_euclid(1_000_000);
+        let (days, sod) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+        let (year, month, day) = civil_from_days(days - DAYS_0_TO_1970);
+        Self {
+            year,
+            month,
+            day,
+            // 1970-01-01 was a Thursday (3)
+            weekday: (days - DAYS_0_TO_1970 + 3).rem_euclid(7) as u32,
+            hour: (sod / 3600) as u32,
+            minute: (sod / 60 % 60) as u32,
+            second: (sod % 60) as u32,
+        }
+    }
+}
+
+/// Local time now.
+pub fn now() -> DateTime {
+    let (utc, offset) = sys::time_now();
+    DateTime::from_ttime(utc + i64::from(offset) * 1_000_000)
+}
+
+/// Howard Hinnant's `civil_from_days`: days since 1970-01-01 to (year, month, day), proleptic Gregorian.
+fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (y as i32, m, d)
+}
+
 /// A kernel timer. Timer handles are owned by the thread that creates them, so a `Timer` stays on its thread.
 pub struct Timer {
     handle: i32,
@@ -116,5 +173,30 @@ impl Drop for Delay {
             t.cancel();
             wait_for_request(&self.status);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DateTime;
+
+    #[test]
+    fn ttime_to_calendar() {
+        let epoch = DateTime::from_ttime(719_528 * 86_400 * 1_000_000);
+        assert_eq!(
+            (epoch.year, epoch.month, epoch.day, epoch.weekday),
+            (1970, 1, 1, 3)
+        );
+        // 2026-11-06 is a Friday; 12:34:56
+        let days = 719_528 + 20_763;
+        let t = DateTime::from_ttime(((days * 86_400) + 12 * 3600 + 34 * 60 + 56) * 1_000_000);
+        assert_eq!(
+            (
+                t.year, t.month, t.day, t.weekday, t.hour, t.minute, t.second
+            ),
+            (2026, 11, 6, 4, 12, 34, 56)
+        );
+        let leap = DateTime::from_ttime((719_528 + 11_016) * 86_400 * 1_000_000);
+        assert_eq!((leap.year, leap.month, leap.day), (2000, 2, 29));
     }
 }

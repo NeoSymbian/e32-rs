@@ -224,6 +224,13 @@ impl Message {
         self.raw.i_handle = 0;
     }
 
+    /// Reply with a handle: the client's request completes with a new handle, in its thread, to the object `handle`
+    /// refers to here (`RMessagePtr2::Complete(RHandleBase)`, `sipc.cpp:2086-2109`) — e.g. a global chunk.
+    pub fn complete_with_handle(mut self, handle: i32) {
+        ipc::message_complete_with_handle(self.raw.i_handle, handle);
+        self.raw.i_handle = 0;
+    }
+
     /// Panic the client thread (`RMessage2::Panic`), then complete the message.
     pub fn panic_client(self, category: &str, reason: i32) {
         let cat = &category.as_bytes()[..category.len().min(sys::KMAX_EXIT_CATEGORY_NAME)];
@@ -282,7 +289,9 @@ pub async fn serve<S: Service>(server: &Server, service: &mut S) -> Result<(), i
     }
 }
 
-fn dispatch<S: Service>(service: &mut S, msg: Message) -> ControlFlow<()> {
+/// Handle one received message the way [`serve`] does (connect, disconnect, bad clients, then
+/// [`Service::message`]) — for servers that run their own loop, e.g. alongside input and timers.
+pub fn dispatch<S: Service>(service: &mut S, msg: Message) -> ControlFlow<()> {
     let cookie = msg.raw.i_session_ptr as *mut S::Session;
     match msg.function() {
         ipc::ECONNECT if !cookie.is_null() => {

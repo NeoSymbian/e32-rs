@@ -29,20 +29,36 @@ impl Display {
     }
 
     /// Copy the rectangle `(x, y, w, h)` of `src` (a `width`-sized frame, `src_stride` pixels per line) to the
-    /// screen; clipped to both.
+    /// same place on the screen; clipped to both.
     pub fn blit(&self, src: &[u32], src_stride: usize, x: usize, y: usize, w: usize, h: usize) {
+        self.blit_to(src, src_stride, (x, y, w, h), (x, y));
+    }
+
+    /// Copy the rectangle `(sx, sy, w, h)` of `src` (`src_stride` pixels per line) to the screen at `(dx, dy)`;
+    /// clipped to the source and the screen.
+    pub fn blit_to(
+        &self,
+        src: &[u32],
+        src_stride: usize,
+        (sx, sy, w, h): (usize, usize, usize, usize),
+        (dx, dy): (usize, usize),
+    ) {
         let w = w
-            .min(self.width.saturating_sub(x))
-            .min(src_stride.saturating_sub(x));
-        let h = h.min(self.height.saturating_sub(y));
-        for row in y..y + h {
-            let Some(line) = src.get(row * src_stride + x..row * src_stride + x + w) else {
+            .min(self.width.saturating_sub(dx))
+            .min(src_stride.saturating_sub(sx));
+        let h = h.min(self.height.saturating_sub(dy));
+        for row in 0..h {
+            let from = (sy + row) * src_stride + sx;
+            let Some(line) = src.get(from..from + w) else {
                 return;
             };
             // SAFETY: the row is inside the mode's frame buffer (clipped above); it is mapped user-writable
             // (EMapAttrUserRw, uncached/buffered, so no cache maintenance is needed).
             unsafe {
-                let dst = self.base.add(row * self.stride + x * 4).cast::<u32>();
+                let dst = self
+                    .base
+                    .add((dy + row) * self.stride + dx * 4)
+                    .cast::<u32>();
                 core::ptr::copy_nonoverlapping(line.as_ptr(), dst, w);
             }
         }

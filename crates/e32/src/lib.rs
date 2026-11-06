@@ -17,6 +17,7 @@ extern crate alloc;
 
 pub use e32_sys as sys;
 
+pub mod chunk;
 #[cfg(all(target_arch = "arm", feature = "critical-section"))]
 mod cs;
 pub mod display;
@@ -94,52 +95,7 @@ macro_rules! dprintln {
     }};
 }
 
-pub mod process {
-    use crate::sys;
-
-    /// Complete the `RProcess::Rendezvous` requests of whoever waits on this process with `reason` — a server
-    /// calls it once its server object exists, so the client that started it can connect.
-    pub fn rendezvous(reason: i32) {
-        sys::process_rendezvous(reason);
-    }
-
-    /// End the current thread with `reason`; for the main thread that ends the process (`User::Exit`).
-    pub fn exit(reason: i32) -> ! {
-        sys::user_thread_exiting(reason);
-        // SAFETY: a null category is allowed for EExitKill.
-        unsafe {
-            sys::thread_kill(
-                sys::KCURRENT_THREAD_HANDLE,
-                sys::TExitType::Kill,
-                reason,
-                core::ptr::null(),
-            )
-        };
-        // ThreadKill on the current thread does not return.
-        loop {
-            core::hint::spin_loop();
-        }
-    }
-
-    /// Panic the current thread with a category (at most 16 bytes kept) and reason (`User::Panic`).
-    pub fn panic(category: &str, reason: i32) -> ! {
-        let cat = &category.as_bytes()[..category.len().min(sys::KMAX_EXIT_CATEGORY_NAME)];
-        let des = sys::TPtrC8::new(cat);
-        // SAFETY: `des` points at `cat`, alive for the call (which does not return).
-        unsafe {
-            sys::thread_kill(
-                sys::KCURRENT_THREAD_HANDLE,
-                sys::TExitType::Panic,
-                reason,
-                &des,
-            )
-        };
-        // ThreadKill on the current thread does not return.
-        loop {
-            core::hint::spin_loop();
-        }
-    }
-}
+pub mod process;
 
 /// The panic category Rust panics show up under.
 pub const PANIC_CATEGORY: &str = "RUST";
