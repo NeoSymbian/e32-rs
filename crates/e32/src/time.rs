@@ -38,8 +38,11 @@ pub struct DateTime {
     pub second: u32,
 }
 
-/// Days from 0000-01-01 (Symbian's `TTime` zero, nominal Gregorian) to 1970-01-01.
-const DAYS_0_TO_1970: i64 = 719_528;
+/// Days from Symbian's `TTime` zero to 1970-01-01. Symbian counts leap years before 1600 the Julian way
+/// (`euser/us_time.cpp:2486`), so 2000-01-01 is day 730,497 (`KDaysFrom0ADTo2000AD`, `kernel/stimer.cpp:29`): 12 days
+/// more than a proleptic Gregorian count. The kernel's clock and ROM timestamps use it, so dates here must too.
+// shortcut: dates before 1600 come out Gregorian, not Symbian's Julian; nothing on a phone has them.
+const DAYS_0_TO_1970: i64 = 719_540;
 
 impl DateTime {
     /// From a Symbian `TTime` value: microseconds since 0000-01-01 00:00.
@@ -182,13 +185,16 @@ mod tests {
 
     #[test]
     fn ttime_to_calendar() {
-        let epoch = DateTime::from_ttime(719_528 * 86_400 * 1_000_000);
+        // Symbian's own anchor: 2000-01-01 (a Saturday) is day 730,497 (kernel/stimer.cpp:29)
+        let y2k = DateTime::from_ttime(730_497 * 86_400 * 1_000_000);
+        assert_eq!((y2k.year, y2k.month, y2k.day, y2k.weekday), (2000, 1, 1, 5));
+        let epoch = DateTime::from_ttime(719_540 * 86_400 * 1_000_000);
         assert_eq!(
             (epoch.year, epoch.month, epoch.day, epoch.weekday),
             (1970, 1, 1, 3)
         );
         // 2026-11-06 is a Friday; 12:34:56
-        let days = 719_528 + 20_763;
+        let days = 719_540 + 20_763;
         let t = DateTime::from_ttime(((days * 86_400) + 12 * 3600 + 34 * 60 + 56) * 1_000_000);
         assert_eq!(
             (
@@ -196,7 +202,7 @@ mod tests {
             ),
             (2026, 11, 6, 4, 12, 34, 56)
         );
-        let leap = DateTime::from_ttime((719_528 + 11_016) * 86_400 * 1_000_000);
+        let leap = DateTime::from_ttime((719_540 + 11_016) * 86_400 * 1_000_000);
         assert_eq!((leap.year, leap.month, leap.day), (2000, 2, 29));
     }
 }
