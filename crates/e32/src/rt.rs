@@ -23,6 +23,29 @@ pub fn block_on<F: Future>(fut: F) -> F::Output {
     }
 }
 
+/// One of two outcomes, from [`select`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum Either<A, B> {
+    Left(A),
+    Right(B),
+}
+
+/// Wait for whichever of two futures finishes first; the other is dropped (which cancels its kernel request).
+pub async fn select<A: Future, B: Future>(a: A, b: B) -> Either<A::Output, B::Output> {
+    let mut a = pin!(a);
+    let mut b = pin!(b);
+    core::future::poll_fn(|cx| {
+        if let Poll::Ready(v) = a.as_mut().poll(cx) {
+            return Poll::Ready(Either::Left(v));
+        }
+        if let Poll::Ready(v) = b.as_mut().poll(cx) {
+            return Poll::Ready(Either::Right(v));
+        }
+        Poll::Pending
+    })
+    .await
+}
+
 /// Wait for two futures together; outputs in order.
 pub async fn join<A: Future, B: Future>(a: A, b: B) -> (A::Output, B::Output) {
     Join {

@@ -17,6 +17,10 @@ extern crate alloc;
 
 pub use e32_sys as sys;
 
+#[cfg(all(target_arch = "arm", feature = "critical-section"))]
+mod cs;
+pub mod display;
+pub mod event;
 pub mod fs;
 #[cfg(target_arch = "arm")]
 pub mod heap;
@@ -154,10 +158,21 @@ pub fn on_panic(info: &core::panic::PanicInfo) -> ! {
     process::panic(PANIC_CATEGORY, 0)
 }
 
+/// ARM EHABI unwind tables in some objects (e.g. Slint's) name the C++ personality routine. With `panic = "abort"`
+/// nothing ever unwinds, but an unresolved reference makes the linker pull libgcc's unwinder, which needs C++ runtime
+/// symbols Symbian does not export. Defining it here keeps the unwinder out.
+#[cfg(target_arch = "arm")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __aeabi_unwind_cpp_pr0() -> ! {
+    process::panic("RUST-UNWIND", 0)
+}
+
 /// Set up what the Rust side needs before `main` runs: the heap behind `alloc`. Called by [`main!`].
 pub fn init() {
     #[cfg(target_arch = "arm")]
     heap::init();
+    #[cfg(all(target_arch = "arm", feature = "critical-section"))]
+    cs::init();
 }
 
 /// Make `fn() -> i32` the EXE's `E32Main` (the Symbian start-up code calls it, then `User::Exit` with its result),

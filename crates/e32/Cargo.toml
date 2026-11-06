@@ -8,6 +8,11 @@ description = "Safe Rust API over EKA2 executive calls: debug output, exit, pani
 
 [dependencies]
 e32-sys.workspace = true
+critical-section = { version = "1.2", optional = true }
+
+[features]
+# a `critical-section` implementation (a kernel mutex) for dependencies that need one, e.g. Slint
+critical-section = ["dep:critical-section"]
 
 # the heap behind `alloc` exists only on the Symbian target
 [target.'cfg(target_arch = "arm")'.dependencies]

@@ -13,6 +13,16 @@ pub fn ticks() -> u32 {
     sys::ntick_count()
 }
 
+/// The tick period in microseconds (1000 on many boards; Syborg's differs). 0 if the HAL refuses.
+pub fn tick_period_us() -> u32 {
+    sys::ui::ntick_period_us().map_or(0, |us| us as u32)
+}
+
+/// Milliseconds since boot, from the tick counter. Wraps with the counter (2^32 ticks).
+pub fn millis() -> u64 {
+    u64::from(ticks()) * u64::from(tick_period_us()) / 1000
+}
+
 /// A kernel timer. Timer handles are owned by the thread that creates them, so a `Timer` stays on its thread.
 pub struct Timer {
     handle: i32,

@@ -12,6 +12,7 @@
 pub mod des;
 pub mod execs;
 pub mod ipc;
+pub mod ui;
 
 pub use des::{TPtr8, TPtr16, TPtrC8, TPtrC16};
 pub use ipc::{RMessage2, SIpcCopyInfo, TIpcArgs, TVersion};
