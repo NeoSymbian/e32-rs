@@ -91,7 +91,7 @@ def main():
     for k, xs in lists.items():
         assert len({snake(x["name"]) for x in xs}) == len(xs), f"duplicate const name in {k}"
     with open(dst, "w") as fh:
-        fh.write(render(lists) + "\n")
+        fh.write(render(lists).rstrip("\n") + "\n")  # exactly what rustfmt keeps
     print(f"{dst}: {len(lists['fast'])} fast, {len(lists['slow'])} slow")
 
 
