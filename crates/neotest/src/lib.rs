@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! R2 on-target test suite (`NEOTEST.EXE`): runs on the 2010 Symbian user side and reports over the debug port,
+//! R2/R3 on-target test suite (`NEOTEST.EXE`): runs on the 2010 Symbian user side and reports over the debug port,
 //! `test <name> ... ok|FAILED: <why>` per test and `neotest: N passed, M failed` at the end. Exit code = failures.
 #![no_std]
 
@@ -11,9 +11,13 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use e32::dprintln;
 use e32::fs::{File, Fs};
+use e32::ipc::{Session, TIpcArgs, TVersion};
+use e32::server::{Server, serve};
 use e32::sync::{Mutex, Semaphore};
+use e32::sys::{TPtr8, TPtr16, TPtrC8, TPtrC16, err};
 use e32::time::{delay, sleep, ticks};
 use e32::{rt, thread};
+use neoecho::op;
 
 e32::main!(main);
 
@@ -31,6 +35,7 @@ const TESTS: &[Test] = &[
     ("threads", threads_share_a_mutex),
     ("semaphore", semaphores_ping_pong),
     ("fs", file_round_trip),
+    ("ipc_server", ipc_server),
 ];
 
 fn main() -> i32 {
@@ -168,4 +173,104 @@ fn file_round_trip() -> Outcome {
     let mut buf = [0u8; 64];
     let n = f.read_at(0, &mut buf).map_err(|e| format!("reread {e}"))?;
     ensure(&buf[..n] == DATA, || format!("reopened file has {n} bytes"))
+}
+
+/// A Rust IPC server (NeoEcho on a thread) driven by a Rust client: version refusal, two concurrent sessions with
+/// their own state, 8- and 16-bit descriptor reads and writes, overflow, an unknown function, and the server ending
+/// when the last session closes.
+fn ipc_server() -> Outcome {
+    const NAME: &str = "neotest.echo";
+    let ready: &'static Semaphore =
+        Box::leak(Box::new(Semaphore::new(0).map_err(|e| format!("sem {e}"))?));
+    let server = thread::spawn(move || {
+        let server = match Server::create(NAME) {
+            Ok(s) => s,
+            Err(e) => {
+                ready.signal();
+                return e;
+            }
+        };
+        ready.signal();
+        match rt::block_on(serve(&server, &mut neoecho::Echo::default())) {
+            Ok(()) => 0,
+            Err(e) => e,
+        }
+    })
+    .map_err(|e| format!("spawn {e}"))?;
+    ensure(ready.wait_timeout(2_000_000), || {
+        "server never started".into()
+    })?;
+
+    let v = neoecho::VERSION;
+    let old = TVersion { major: 9, ..v };
+    let refused = Session::connect(NAME, old).err();
+    ensure(refused == Some(err::KERR_NOT_SUPPORTED), || {
+        format!("version 9 connect gave {refused:?}")
+    })?;
+    let a = Session::connect(NAME, v).map_err(|e| format!("connect a {e}"))?;
+    let b = Session::connect(NAME, v).map_err(|e| format!("connect b {e}"))?;
+
+    let mut args = TIpcArgs::new();
+    args.int(0, 40).int(1, 2);
+    let r = a.send_receive(op::ADD, &args);
+    ensure(r == Ok(42), || format!("ADD gave {r:?}"))?;
+
+    let mut out = [0u8; 16];
+    let mut outd = TPtr8::new(&mut out);
+    let input8 = TPtrC8::new(b"symbian");
+    let mut args = TIpcArgs::new();
+    args.desc8(0, &input8).des8(1, &mut outd);
+    let r = b.send_receive(op::REVERSE8, &args);
+    let n = outd.len();
+    ensure(r == Ok(7) && &out[..n] == b"naibmys", || {
+        format!("REVERSE8 gave {r:?}, {:?}", &out[..n])
+    })?;
+
+    let input: Vec<u16> = "Neo-3".encode_utf16().collect();
+    let mut wide = [0u16; 8];
+    let mut wided = TPtr16::new(&mut wide);
+    let input16 = TPtrC16::new(&input);
+    let mut args = TIpcArgs::new();
+    args.desc16(0, &input16).des16(1, &mut wided);
+    let r = b.send_receive(op::UPPER16, &args);
+    let n = wided.len();
+    let want: Vec<u16> = "NEO-3".encode_utf16().collect();
+    ensure(r == Ok(5) && wide[..n] == want[..], || {
+        format!("UPPER16 gave {r:?}, {:?}", &wide[..n])
+    })?;
+
+    let mut small = [0u8; 4];
+    let mut smalld = TPtr8::new(&mut small);
+    let mut args = TIpcArgs::new();
+    args.des8(0, &mut smalld).int(1, 0);
+    let r = a.send_receive(op::WRITE_AT, &args);
+    let n = smalld.len();
+    ensure(r == Ok(0) && &small[..n] == b"xyz", || {
+        format!("WRITE_AT 0 gave {r:?}, {:?}", &small[..n])
+    })?;
+    let mut smalld = TPtr8::new(&mut small);
+    let mut args = TIpcArgs::new();
+    args.des8(0, &mut smalld).int(1, 2);
+    let r = a.send_receive(op::WRITE_AT, &args);
+    ensure(r == Err(err::KERR_OVERFLOW), || {
+        format!("WRITE_AT 2 gave {r:?}")
+    })?;
+
+    let r = a.send_receive(99, &TIpcArgs::new());
+    ensure(r == Err(err::KERR_NOT_SUPPORTED), || {
+        format!("function 99 gave {r:?}")
+    })?;
+    // a: ADD, WRITE_AT x2, 99, COUNT = 5; b: REVERSE8, UPPER16, COUNT = 3.
+    let counts = (
+        a.send_receive(op::COUNT, &TIpcArgs::new()),
+        b.send_receive(op::COUNT, &TIpcArgs::new()),
+    );
+    ensure(counts == (Ok(5), Ok(3)), || {
+        format!("COUNT gave {counts:?}")
+    })?;
+
+    drop(a);
+    drop(b);
+    let code = server.join();
+    ensure(code == 0, || format!("server thread ended with {code}"))
 }

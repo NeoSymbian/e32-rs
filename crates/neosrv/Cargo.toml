@@ -1,0 +1,16 @@
+[package]
+name = "neosrv"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "R3 test program: the NeoEcho server as its own process (a Rust IPC server)"
+
+[lib]
+crate-type = ["staticlib"]
+test = false
+
+[dependencies]
+e32.workspace = true
+neoecho = { path = "../neoecho" }

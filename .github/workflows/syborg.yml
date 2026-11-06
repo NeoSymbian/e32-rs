@@ -40,12 +40,12 @@ jobs:
         run: |
           rustup toolchain install   # reads rust-toolchain.toml
           cargo fmt --check
-          cargo clippy -p e32-sys -p e32 -- -D warnings
+          cargo clippy -p e32-sys -p e32 -p neoecho -- -D warnings
           cargo test -p e32-sys -p e32
           cargo arm
           mkdir -p ../symbian-2010/rust
-          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic,libneotest}.a ../symbian-2010/rust/
-          cp symbian/exes.txt ../symbian-2010/rust/
+          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv}.a ../symbian-2010/rust/
+          cp symbian/exes.txt symbian/neocli.cpp ../symbian-2010/rust/
 
       - name: Fetch the Symbian sources
         working-directory: symbian-2010
@@ -55,9 +55,9 @@ jobs:
         working-directory: symbian-2010
         run: ./build.sh
 
-      - name: Boot and run neohello, neor1, neopanic, neotest, neor1c (from C:)
+      - name: Boot and run neohello, neor1, neopanic, neotest, neor1c (from C:), neocli (starts neosrv)
         working-directory: symbian-2010
-        run: RUN=neohello,neor1,neopanic,neotest,neor1c SECS=200 ./boot.sh
+        run: RUN=neohello,neor1,neopanic,neotest,neor1c,neocli SECS=220 ./boot.sh
 
       - name: Check the output
         working-directory: symbian-2010
@@ -75,9 +75,15 @@ jobs:
           grep -a "\[EKERN\] panic in 'NEOPANIC.EXE.*category='RUST'" $s
           # R2: heap, timers, async, threads, locks, file-server IPC; an EXE loaded from C:
           for t in alloc timer async threads semaphore fs; do grep -a "test $t ... ok" $s; done
-          grep -a 'neotest: 6 passed, 0 failed' $s
           ! grep -aq "\[EKERN\] exit 'NEOTEST.EXE\[[0-9a-f]*\]0001::Main'" $s
           grep -a "\[EKERN\] exit 'NEOR1C.EXE.*reason=0x0000002a" $s
+          # R3: a Rust IPC server -- in-process with a Rust client, and as NEOSRV.EXE with the C++ client NEOCLI.EXE
+          grep -a 'test ipc_server ... ok' $s
+          grep -a 'neotest: 7 passed, 0 failed' $s
+          grep -a 'neocli: 9 passed, 0 failed' $s
+          grep -a 'neosrv: done' $s
+          grep -a 'neocli: server exited Kill 0' $s
+          ! grep -aq "\[EKERN\] \(exit\|panic in\) 'NEOSRV\|\[EKERN\] \(exit\|panic in\) 'NEOCLI" $s
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
       - uses: actions/upload-artifact@v4

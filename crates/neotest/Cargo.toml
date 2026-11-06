@@ -13,3 +13,4 @@ test = false
 
 [dependencies]
 e32.workspace = true
+neoecho = { path = "../neoecho" }

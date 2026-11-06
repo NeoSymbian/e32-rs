@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The Rust side of a Symbian EXE, all on executive calls: debug output, exit, panic, `E32Main`, a heap for `alloc`,
-//! request waiting, timers, a small async runtime, threads, locks, client-server IPC and a file-server client.
+//! request waiting, timers, a small async runtime, threads, locks, client-server IPC (both sides) and a file-server
+//! client.
 //!
 //! ```ignore
 //! #![no_std]
@@ -22,6 +23,7 @@ pub mod heap;
 pub mod ipc;
 pub mod request;
 pub mod rt;
+pub mod server;
 pub mod sync;
 pub mod thread;
 pub mod time;
@@ -90,6 +92,12 @@ macro_rules! dprintln {
 
 pub mod process {
     use crate::sys;
+
+    /// Complete the `RProcess::Rendezvous` requests of whoever waits on this process with `reason` — a server
+    /// calls it once its server object exists, so the client that started it can connect.
+    pub fn rendezvous(reason: i32) {
+        sys::process_rendezvous(reason);
+    }
 
     /// End the current thread with `reason`; for the main thread that ends the process (`User::Exit`).
     pub fn exit(reason: i32) -> ! {

@@ -93,12 +93,43 @@ impl TPtr8 {
     }
 }
 
+/// `TPtr16`: a writable 16-bit descriptor; lengths count characters. `{ chars | EPtr << 28, max_chars, ptr }`.
+#[repr(C)]
+#[derive(Debug)]
+pub struct TPtr16 {
+    len_type: u32,
+    max_len: i32,
+    ptr: *mut u16,
+}
+
+impl TPtr16 {
+    /// An empty descriptor whose capacity is the whole of `buf`.
+    pub fn new(buf: &mut [u16]) -> Self {
+        Self {
+            len_type: word(EPTR, 0),
+            max_len: buf.len() as i32,
+            ptr: buf.as_mut_ptr(),
+        }
+    }
+    /// The length (in characters) the kernel left.
+    pub fn len(&self) -> usize {
+        // SAFETY: an aligned u32 inside `self`.
+        (unsafe { core::ptr::read_volatile(&self.len_type) } & KMASK_DES_LENGTH) as usize
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn descriptor_words() {
+        let mut wbuf = [0u16; 4];
+        let p16 = TPtr16::new(&mut wbuf);
+        assert_eq!((p16.len(), p16.max_len, p16.len_type), (0, 4, 0x2000_0000));
         let c = TPtrC8::new(b"hello");
         assert_eq!((c.len(), c.des_type(), c.len_type), (5, 1, 0x1000_0005));
         let w: [u16; 3] = [b'C' as u16, b':' as u16, b'\\' as u16];

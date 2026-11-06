@@ -34,7 +34,7 @@ impl Session {
 
     /// Send a message and wait for the reply: `Ok(value >= 0)` or `Err(negative error)`.
     /// Everything `args` points at must stay alive for the call (it does: the call blocks).
-    pub fn send_receive(&self, function: i32, args: &TIpcArgs) -> Result<i32, i32> {
+    pub fn send_receive(&self, function: i32, args: &TIpcArgs<'_>) -> Result<i32, i32> {
         let mut status = TRequestStatus::pending();
         // SAFETY: `args`, its descriptors and `status` live on the caller's/this frame until the wait returns.
         let mut r = unsafe { ipc::session_send_sync(self.handle, function, args, &mut status) };

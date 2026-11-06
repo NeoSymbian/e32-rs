@@ -13,7 +13,24 @@ The full plan is in [rust-integration.md](https://github.com/NeoSymbian/symbian-
 
 ## Status
 
-**R2 is done: the `e32` core.** Rust programs on the 2010 Symbian user side now have:
+**R3 is done: IPC servers in Rust.** `e32::server` is the Rust `CServer2`: `Server::create`, an async
+`receive`, `Message` (read and write the client's 8- and 16-bit descriptors, complete exactly once, panic a bad
+client), and `serve` over a `Service` trait (connect with version check, per-session state, disconnect). Tested both
+ways on QEMU Syborg:
+
+```
+test ipc_server ... ok      (NeoEcho on a server thread, a Rust client with two sessions)
+neotest: 7 passed, 0 failed
+neocli: version_refused ... ok        (NEOCLI.EXE: plain C++ RProcess/RSessionBase/TIpcArgs, another process)
+neocli: add / reverse8 / upper16 / write_at / overflow / unknown_function / session_count ... ok
+neosrv: done                          (NEOSRV.EXE, the Rust server, exits when its last session closes)
+neocli: server exited Kill 0
+neocli: 9 passed, 0 failed
+```
+
+`TIpcArgs` borrows the descriptors it points at, so a descriptor that dies before the send is a compile error.
+
+**R2: the `e32` core.** Rust programs on the 2010 Symbian user side have:
 - a heap behind `alloc`, in a private chunk that grows on demand;
 - request waiting, timers, and a small async runtime that replaces Symbian's active objects;
 - threads, mutexes and semaphores;
@@ -32,19 +49,21 @@ neotest: 6 passed, 0 failed
 ```
 
 R1 (`NEOR1.EXE` exits 42; `NEOPANIC.EXE` panics with category `RUST`) and R0 (`NEOHELLO.EXE`) still run.
-`NEOR1C.EXE` is `neor1` installed on C:. Next is **R3**, an IPC server written in Rust.
+`NEOR1C.EXE` is `neor1` installed on C:. Next is **R5**, the Rust UI server (neoui) on Syborg.
 
 ## Crates
 
 | Crate | What |
 |---|---|
-| `e32-sys` | Raw executive calls. Numbers come from `src/execs.rs`, generated from the kernel's `execs.txt` by `tools/gen_execs.py`; all 315 match the 2010 `genexec.pl`. Also here: the kernel ABI types (`TRequestStatus`, `TChunkCreate`, the 64-byte thread create info, the `TPtrC8`/`TPtr8`/`TPtrC16` descriptors, `TIpcArgs`, `TVersion`) and the `SessionSendSync` stub, which passes extended arguments in r4–r8 like `uc_exec.cia` |
-| `e32` | The program-facing API. `dprintln!`; `process::{exit, panic}`; `e32::main!` (`E32Main`, heap set-up, panic handler with category `RUST`). `heap`: the global allocator. `request::wait_for_request`. `time::{Timer, sleep, delay, ticks}`. `rt::{block_on, join}`. `thread::spawn`/`join`. `sync::{Mutex, Semaphore}`. `ipc::Session`. `fs::{Fs, File}` |
-| `neotest` | The R2 on-device test suite |
+| `e32-sys` | Raw executive calls. Numbers come from `src/execs.rs`, generated from the kernel's `execs.txt` by `tools/gen_execs.py`; all 315 match the 2010 `genexec.pl`. Also here: the kernel ABI types (`TRequestStatus`, `TChunkCreate`, the 64-byte thread create info, the `TPtrC8`/`TPtr8`/`TPtrC16`/`TPtr16` descriptors, `TIpcArgs`, `TVersion`, `RMessage2`, `SIpcCopyInfo`) and the `SessionSendSync`/`MessageIpcCopy` stubs, which pass extended arguments in r4–r8 like `uc_exec.cia` |
+| `e32` | The program-facing API. `dprintln!`; `process::{exit, panic}`; `e32::main!` (`E32Main`, heap set-up, panic handler with category `RUST`). `heap`: the global allocator. `request::wait_for_request`. `time::{Timer, sleep, delay, ticks}`. `rt::{block_on, join}`. `thread::spawn`/`join`. `sync::{Mutex, Semaphore}`. `ipc::Session`. `server::{Server, Message, Service, serve}`. `process::rendezvous`. `fs::{Fs, File}` |
+| `neotest` | The on-device test suite (R2 + R3) |
+| `neoecho`, `neosrv` | R3: the NeoEcho test service, and `NEOSRV.EXE` serving it as its own process |
+| `symbian/neocli.cpp` | R3: the C++ client (euser only), built as `NEOCLI.EXE` with no Rust linked |
 | `neor1`, `neopanic` | R1 test programs |
 | `rust-hello` | R0 spike, called from C++ glue |
 
-The EXEs are listed in `symbian/exes.txt` (name, uid3, staticlib, optional `drive=c`), which symbian-2010's
+The EXEs are listed in `symbian/exes.txt` (name, uid3, staticlib or `-`, optional C++ file, optional `drive=c`), which symbian-2010's
 `emitter/build_rust_exe.py` reads.
 
 ## Building
@@ -62,8 +81,8 @@ To run them on Syborg (needs Docker; the CI in `.github/workflows/syborg.yml` do
 
 ```sh
 git clone https://github.com/NeoSymbian/symbian-2010 && cd symbian-2010
-mkdir -p rust && cp ../e32-rs/target/armv5te-none-eabi/release/lib*.a ../e32-rs/symbian/exes.txt rust/
-./fetch.sh && ./build.sh && RUN=neohello,neor1,neopanic,neotest,neor1c SECS=200 ./boot.sh   # -> out/serial.log, out/fb.png
+mkdir -p rust && cp ../e32-rs/target/armv5te-none-eabi/release/lib*.a ../e32-rs/symbian/{exes.txt,neocli.cpp} rust/
+./fetch.sh && ./build.sh && RUN=neohello,neor1,neopanic,neotest,neor1c,neocli SECS=220 ./boot.sh   # -> out/serial.log, out/fb.png
 ```
 
 **ABI rule:** never use an `eabihf` target. The Symbian user side passes floating-point values in integer registers;

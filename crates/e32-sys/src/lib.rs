@@ -13,8 +13,8 @@ pub mod des;
 pub mod execs;
 pub mod ipc;
 
-pub use des::{TPtr8, TPtrC8, TPtrC16};
-pub use ipc::{TIpcArgs, TVersion};
+pub use des::{TPtr8, TPtr16, TPtrC8, TPtrC16};
+pub use ipc::{RMessage2, SIpcCopyInfo, TIpcArgs, TVersion};
 
 use core::ffi::c_void;
 
@@ -34,10 +34,14 @@ pub mod err {
     pub const KERR_GENERAL: i32 = -2;
     pub const KERR_CANCEL: i32 = -3;
     pub const KERR_NO_MEMORY: i32 = -4;
+    pub const KERR_NOT_SUPPORTED: i32 = -5;
     pub const KERR_ARGUMENT: i32 = -6;
     pub const KERR_OVERFLOW: i32 = -9;
+    pub const KERR_ALREADY_EXISTS: i32 = -11;
+    pub const KERR_SERVER_TERMINATED: i32 = -15;
     pub const KERR_BAD_NAME: i32 = -28;
     pub const KERR_TIMED_OUT: i32 = -33;
+    pub const KERR_BAD_DESCRIPTOR: i32 = -38;
 }
 
 /// `TExitType` (`e32const.h`).
@@ -319,6 +323,13 @@ pub fn thread_resume(handle: TInt) {
 pub unsafe fn thread_logon(handle: TInt, status: *mut TRequestStatus) {
     // SAFETY: forwarded caller contract.
     unsafe { exec4::<{ slow::THREAD_LOGON }>(handle as u32, status as u32, 0, 0) };
+}
+
+/// `Exec::ProcessRendezvous(TInt aReason)`: complete the rendezvous requests of whoever waits on this process
+/// (`RProcess::Rendezvous`), e.g. a client that started this server.
+pub fn process_rendezvous(reason: TInt) {
+    // SAFETY: plain integer.
+    unsafe { exec4::<{ slow::PROCESS_RENDEZVOUS }>(reason as u32, 0, 0, 0) };
 }
 
 // ---- semaphores, mutexes -----------------------------------------------------------------------------------------
