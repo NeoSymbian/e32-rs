@@ -245,6 +245,13 @@ pub fn ntick_count() -> u32 {
     unsafe { exec4::<{ fast::N_TICK_COUNT }>(0, 0, 0, 0) }
 }
 
+/// Fast `Exec::FastCounter()`: the high-resolution counter (`User::FastCounter`); wraps, see
+/// [`ui::fast_counter_frequency`].
+pub fn fast_counter() -> u32 {
+    // SAFETY: no arguments.
+    unsafe { exec4::<{ fast::FAST_COUNTER }>(0, 0, 0, 0) }
+}
+
 /// Fast `Exec::Heap()`: the current thread's euser `RAllocator*` (what a new thread shares by default).
 pub fn heap() -> *mut c_void {
     // SAFETY: no arguments.

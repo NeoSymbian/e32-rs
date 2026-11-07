@@ -18,6 +18,21 @@ pub fn tick_period_us() -> u32 {
     sys::ui::ntick_period_us().map_or(0, |us| us as u32)
 }
 
+/// The high-resolution counter (`User::FastCounter`), for timing short things; wraps at 2^32.
+pub fn fast_counter() -> u32 {
+    sys::fast_counter()
+}
+
+/// The fast counter's frequency in Hz; 0 if the HAL refuses.
+pub fn fast_counter_hz() -> u32 {
+    sys::ui::fast_counter_frequency().map_or(0, |hz| hz as u32)
+}
+
+/// Microseconds between fast-counter readings `from` and `to` at `hz`, across one wrap.
+pub fn counter_us(from: u32, to: u32, hz: u32) -> u32 {
+    (u64::from(to.wrapping_sub(from)) * 1_000_000 / u64::from(hz.max(1))) as u32
+}
+
 /// Milliseconds since boot, from the tick counter. Wraps with the counter (2^32 ticks).
 pub fn millis() -> u64 {
     u64::from(ticks()) * u64::from(tick_period_us()) / 1000
@@ -182,6 +197,14 @@ impl Drop for Delay {
 #[cfg(test)]
 mod tests {
     use super::DateTime;
+
+    #[test]
+    fn counter_intervals() {
+        assert_eq!(super::counter_us(100, 1_100, 1_000_000), 1_000);
+        assert_eq!(super::counter_us(u32::MAX - 9, 10, 1_000), 20_000); // across the wrap
+        assert_eq!(super::counter_us(0, 32_768, 32_768), 1_000_000);
+        assert_eq!(super::counter_us(5, 6, 0), 1_000_000); // no frequency: no division by zero
+    }
 
     #[test]
     fn ttime_to_calendar() {

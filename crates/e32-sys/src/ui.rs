@@ -11,6 +11,8 @@ use crate::{TInt, TRequestStatus};
 pub const EHAL_GROUP_KERNEL: TInt = 0;
 /// `EKernelHalNTickPeriod`: the nanokernel tick in microseconds, written as a raw `TInt` (`sutils.cpp:2630`).
 pub const EKERNEL_HAL_NTICK_PERIOD: TInt = 11;
+/// `EKernelHalFastCounterFrequency` (`u32hal.h:412`): the fast counter's frequency in Hz.
+pub const EKERNEL_HAL_FAST_COUNTER_FREQUENCY: TInt = 10;
 /// `EHalGroupDisplay` (`u32hal.h`).
 pub const EHAL_GROUP_DISPLAY: TInt = 4;
 /// `EDisplayHalCurrentModeInfo`: fills a `TVideoInfoV01` for the current mode.
@@ -71,6 +73,21 @@ pub fn display_mode_info() -> Result<TVideoInfoV01, TInt> {
         )
     };
     if r < 0 { Err(r) } else { Ok(info) }
+}
+
+/// The fast counter's frequency in Hz (`User::FastCounter` units).
+pub fn fast_counter_frequency() -> Result<TInt, TInt> {
+    let mut hz: TInt = 0;
+    // SAFETY: the kernel writes one TInt to `a1` (kumemput32, sutils.cpp:2636).
+    let r = unsafe {
+        hal_function(
+            EHAL_GROUP_KERNEL,
+            EKERNEL_HAL_FAST_COUNTER_FREQUENCY,
+            (&mut hz as *mut TInt).cast(),
+            core::ptr::null_mut(),
+        )
+    };
+    if r < 0 { Err(r) } else { Ok(hz) }
 }
 
 /// The nanokernel tick period in microseconds (`NTickCount` units).

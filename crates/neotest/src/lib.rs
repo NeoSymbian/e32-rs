@@ -87,6 +87,15 @@ fn timer_waits() -> Outcome {
     dprintln!("neotest: 100 ms = {} ticks, 200 ms = {} ticks", d1, d2);
     ensure(d1 > 0 && d2 >= d1 + d1 / 2, || {
         format!("100 ms = {d1} ticks, 200 ms = {d2} ticks")
+    })?;
+    // the fast counter measures a 100 ms sleep as 100 ms, give or take a tick
+    let hz = e32::time::fast_counter_hz();
+    let c0 = e32::time::fast_counter();
+    sleep(100_000);
+    let us = e32::time::counter_us(c0, e32::time::fast_counter(), hz);
+    dprintln!("neotest: fast counter {} Hz, 100 ms = {} us", hz, us);
+    ensure(hz > 0 && (80_000..=150_000).contains(&us), || {
+        format!("fast counter {hz} Hz measured 100 ms as {us} us")
     })
 }
 
