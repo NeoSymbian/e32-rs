@@ -389,6 +389,20 @@ pub fn process_exit_reason(handle: TInt) -> TInt {
     unsafe { exec4::<{ slow::PROCESS_EXIT_REASON }>(handle as u32, 0, 0, 0) as TInt }
 }
 
+/// `Exec::SetUTCTimeAndOffset(const TInt64& aUtc, TInt aOffset, TUint aMode, TUint aChanges)` (`stimer.cpp:1675`) with
+/// mode `ETimeSetTime | ETimeSetOffset` (`u32std.h:105`): sets both. Needs WriteDeviceData (else a platsec panic).
+pub fn set_utc_time_and_offset(utc: i64, offset: TInt) -> TInt {
+    // SAFETY: the kernel reads one TInt64 from the pointer (kumemget32) during the call.
+    unsafe {
+        exec4::<{ slow::SET_UTC_TIME_AND_OFFSET }>(
+            &utc as *const i64 as u32,
+            offset as u32,
+            1 | 2,
+            0,
+        ) as TInt
+    }
+}
+
 /// `Exec::TimeNow(TInt64& aUtc, TInt& aOffset)`: UTC in microseconds since 0001-01-01 and the UTC offset in seconds.
 pub fn time_now() -> (i64, TInt) {
     let mut utc: i64 = 0;

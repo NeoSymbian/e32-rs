@@ -13,6 +13,12 @@ pub const EHAL_GROUP_KERNEL: TInt = 0;
 pub const EKERNEL_HAL_NTICK_PERIOD: TInt = 11;
 /// `EKernelHalFastCounterFrequency` (`u32hal.h:412`): the fast counter's frequency in Hz.
 pub const EKERNEL_HAL_FAST_COUNTER_FREQUENCY: TInt = 10;
+/// `EHalGroupVariant` (`u32hal.h`): NeoSymbian's own functions are 0x4e00.. (kernel `a64_variant.cpp`).
+pub const EHAL_GROUP_VARIANT: TInt = 1;
+/// `ENeoHalPower`: a1 = 0 restart, 1 restart to fastboot, 2 power off; needs PowerMgmt. Returns only on a failure.
+pub const ENEO_HAL_POWER: TInt = 0x4e0b;
+/// `ENeoHalRtcRead`: the PMIC RTC's raw seconds, written as a `TUint32`; KErrNotSupported without one.
+pub const ENEO_HAL_RTC_READ: TInt = 0x4e0c;
 /// `EHalGroupDisplay` (`u32hal.h`).
 pub const EHAL_GROUP_DISPLAY: TInt = 4;
 /// `EDisplayHalCurrentModeInfo`: fills a `TVideoInfoV01` for the current mode.
@@ -103,6 +109,34 @@ pub fn ntick_period_us() -> Result<TInt, TInt> {
         )
     };
     if r < 0 { Err(r) } else { Ok(us) }
+}
+
+/// NeoSymbian: restart (0), restart to fastboot (1) or power off (2). Only a failure comes back.
+pub fn neo_power(action: TInt) -> TInt {
+    // SAFETY: the kernel takes the action as a plain value in a1.
+    unsafe {
+        hal_function(
+            EHAL_GROUP_VARIANT,
+            ENEO_HAL_POWER,
+            action as usize as *mut u8,
+            core::ptr::null_mut(),
+        )
+    }
+}
+
+/// NeoSymbian: the board RTC's raw seconds (no fixed epoch: it counts on through power-offs).
+pub fn neo_rtc_seconds() -> Result<u32, TInt> {
+    let mut secs: u32 = 0;
+    // SAFETY: the kernel writes one TUint32 to `a1` (kumemput32).
+    let r = unsafe {
+        hal_function(
+            EHAL_GROUP_VARIANT,
+            ENEO_HAL_RTC_READ,
+            (&mut secs as *mut u32).cast(),
+            core::ptr::null_mut(),
+        )
+    };
+    if r < 0 { Err(r) } else { Ok(secs) }
 }
 
 /// `TRawEvent::TType` values (`e32event.h`) the UI handles.

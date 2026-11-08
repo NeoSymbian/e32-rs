@@ -78,6 +78,35 @@ impl DateTime {
     }
 }
 
+/// A Symbian `TTime` (microseconds since 0000-01-01) from Unix seconds.
+pub fn ttime_from_unix(secs: i64) -> i64 {
+    (secs + DAYS_0_TO_1970 * 86_400) * 1_000_000
+}
+
+/// Unix seconds from a Symbian `TTime`.
+pub fn unix_from_ttime(us: i64) -> i64 {
+    us.div_euclid(1_000_000) - DAYS_0_TO_1970 * 86_400
+}
+
+/// The kernel's UTC (Unix seconds) and UTC offset (seconds).
+pub fn utc_now() -> (i64, i32) {
+    let (utc, offset) = sys::time_now();
+    (unix_from_ttime(utc), offset)
+}
+
+/// Set the kernel's UTC (Unix seconds) and UTC offset (seconds). Needs WriteDeviceData.
+pub fn set_utc_and_offset(unix: i64, offset: i32) -> Result<(), i32> {
+    match sys::set_utc_time_and_offset(ttime_from_unix(unix), offset) {
+        r if r < 0 => Err(r),
+        _ => Ok(()),
+    }
+}
+
+/// The board RTC's raw seconds: no fixed epoch, but it keeps counting while the phone is off. `None` without one.
+pub fn rtc_seconds() -> Option<u32> {
+    sys::ui::neo_rtc_seconds().ok()
+}
+
 /// Local time now.
 pub fn now() -> DateTime {
     let (utc, offset) = sys::time_now();
@@ -204,6 +233,19 @@ mod tests {
         assert_eq!(super::counter_us(u32::MAX - 9, 10, 1_000), 20_000); // across the wrap
         assert_eq!(super::counter_us(0, 32_768, 32_768), 1_000_000);
         assert_eq!(super::counter_us(5, 6, 0), 1_000_000); // no frequency: no division by zero
+    }
+
+    #[test]
+    fn unix_round_trip() {
+        // 2026-11-08 12:00:00 UTC
+        let t = super::ttime_from_unix(1_794_139_200);
+        let d = DateTime::from_ttime(t);
+        assert_eq!(
+            (d.year, d.month, d.day, d.hour, d.minute),
+            (2026, 11, 8, 12, 0)
+        );
+        assert_eq!(super::unix_from_ttime(t), 1_794_139_200);
+        assert_eq!(super::unix_from_ttime(t + 999_999), 1_794_139_200);
     }
 
     #[test]

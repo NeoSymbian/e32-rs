@@ -30,6 +30,7 @@ const EFS_RENAME: i32 = 20;
 const EFS_DIR_SUB_CLOSE: i32 = 27;
 const EFS_DIR_OPEN: i32 = 49;
 const EFS_DIR_READ_PACKED: i32 = 51;
+const EFS_FINALISE_DRIVE: i32 = 95;
 const EFS_FILE_SUB_CLOSE: i32 = 28;
 const EFS_FILE_OPEN: i32 = 30;
 const EFS_FILE_REPLACE: i32 = 32;
@@ -64,6 +65,7 @@ pub mod att {
 /// `TDriveInfo::iDriveAtt` bits (`e32const.h`).
 pub mod drive_att {
     pub const ROM: u32 = 0x02;
+    pub const REDIRECTED: u32 = 0x04;
     pub const INTERNAL: u32 = 0x10;
     pub const REMOVABLE: u32 = 0x20;
     pub const REMOTE: u32 = 0x40;
@@ -240,6 +242,24 @@ impl Fs {
     /// Delete file `path` (`RFs::Delete`).
     pub fn delete(&self, path: &str) -> Result<(), i32> {
         self.path_op(EFS_DELETE, path, 0)
+    }
+
+    /// Mark every writable drive's volume clean before power goes (`RFs::FinaliseDrives`, `sfsrv/cl_cli.cpp:3302`):
+    /// each drive but ROM and redirected ones gets `EFsFinaliseDrive` with `EFinal_RW` (0: the next write simply
+    /// marks it in use again). Needs DiskAdmin. The first error, if any, after trying them all.
+    pub fn finalise_drives(&self) -> Result<(), i32> {
+        let mut first = Ok(());
+        for (drive, &att) in self.drives()?.iter().enumerate() {
+            if att == 0 || u32::from(att) & (drive_att::ROM | drive_att::REDIRECTED) != 0 {
+                continue;
+            }
+            let mut a = TIpcArgs::new();
+            a.int(0, drive as i32).int(1, 0);
+            if let Err(e) = self.session.send_receive(EFS_FINALISE_DRIVE, &a) {
+                first = first.and(Err(e));
+            }
+        }
+        first
     }
 
     /// Rename or move a file or directory within one drive (`RFs::Rename`).
