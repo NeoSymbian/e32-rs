@@ -42,6 +42,7 @@ pub mod err {
     pub const KERR_PATH_NOT_FOUND: i32 = -12;
     pub const KERR_IN_USE: i32 = -14;
     pub const KERR_SERVER_TERMINATED: i32 = -15;
+    pub const KERR_NOT_READY: i32 = -18;
     pub const KERR_ACCESS_DENIED: i32 = -21;
     pub const KERR_EOF: i32 = -25;
     pub const KERR_BAD_NAME: i32 = -28;
@@ -271,6 +272,21 @@ pub fn timer_create() -> TInt {
 pub unsafe fn timer_after(handle: TInt, status: *mut TRequestStatus, micros: TInt) {
     // SAFETY: forwarded caller contract.
     unsafe { exec4::<{ slow::TIMER_AFTER }>(handle as u32, status as u32, micros as u32, 0) };
+}
+
+/// `Exec::TimerHighRes(TInt aHandle, TRequestStatus&, TInt aMicroseconds)`.
+/// Completion uses the nanokernel timer resolution instead of the regular 1/64-second timer queue.
+/// The executive has no immediate return value; the result is written to `status` on completion.
+///
+/// # Safety
+/// `status` must be pending and stay valid (and not move) until completion or cancellation followed by a wait.
+///
+/// # Panics
+/// The kernel panics for an invalid timer handle or an already outstanding timer request. `micros` must be
+/// nonnegative, as checked by the user-side `RTimer::HighRes` API before dispatch.
+pub unsafe fn timer_high_res(handle: TInt, status: *mut TRequestStatus, micros: TInt) {
+    // SAFETY: forwarded caller contract. TimerHighRes is void, like TimerAfter; ignore the result register.
+    unsafe { exec4::<{ slow::TIMER_HIGH_RES }>(handle as u32, status as u32, micros as u32, 0) };
 }
 
 /// `Exec::TimerCancel(TInt aHandle)`: completes a pending request with `KErrCancel`.

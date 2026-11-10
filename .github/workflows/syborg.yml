@@ -74,13 +74,13 @@ jobs:
           grep -a 'rust panic: deliberate panic 7' $s
           grep -a "\[EKERN\] panic in 'NEOPANIC.EXE.*category='RUST'" $s
           # R2: heap, timers, async, threads, locks, file-server IPC; an EXE loaded from C:
-          for t in alloc timer async threads semaphore fs; do grep -a "test $t ... ok" $s; done
+          for t in alloc timer timer_high_res async threads semaphore fs fs_ops; do grep -a "test $t ... ok" $s; done
           ! grep -aq "\[EKERN\] exit 'NEOTEST.EXE\[[0-9a-f]*\]0001::Main'" $s
           grep -a "\[EKERN\] exit 'NEOR1C.EXE.*reason=0x0000002a" $s
           # R3: a Rust IPC server -- in-process with a Rust client, and as NEOSRV.EXE with the C++ client NEOCLI.EXE
           grep -a 'test ipc_server ... ok' $s
           grep -a 'test fs_dirs ... ok' $s
-          grep -a 'neotest: 8 passed, 0 failed' $s
+          grep -a 'neotest: 10 passed, 0 failed' $s
           grep -a 'neocli: 9 passed, 0 failed' $s
           grep -a 'neosrv: done' $s
           grep -a 'neocli: server exited Kill 0' $s
