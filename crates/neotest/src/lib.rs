@@ -31,10 +31,12 @@ fn ensure(ok: bool, why: impl FnOnce() -> String) -> Outcome {
 const TESTS: &[Test] = &[
     ("alloc", alloc_works),
     ("timer", timer_waits),
+    ("timer_high_res", high_res_timer_waits),
     ("async", async_joins),
     ("threads", threads_share_a_mutex),
     ("semaphore", semaphores_ping_pong),
     ("fs", file_round_trip),
+    ("fs_ops", file_operations),
     ("fs_dirs", directories_and_drives),
     ("ipc_server", ipc_server),
 ];
@@ -96,6 +98,30 @@ fn timer_waits() -> Outcome {
     dprintln!("neotest: fast counter {} Hz, 100 ms = {} us", hz, us);
     ensure(hz > 0 && (80_000..=150_000).contains(&us), || {
         format!("fast counter {hz} Hz measured 100 ms as {us} us")
+    })
+}
+
+/// Zero and short waits reuse one thread-owned high-resolution timer.
+fn high_res_timer_waits() -> Outcome {
+    let mut timer = e32::time::Timer::new().map_err(|e| format!("high-res timer create {e}"))?;
+    ensure(timer.wait_high_res(-1) == Err(err::KERR_ARGUMENT), || {
+        "high-res timer accepted a negative interval".into()
+    })?;
+    timer
+        .wait_high_res(0)
+        .map_err(|e| format!("zero wait {e}"))?;
+    let hz = e32::time::fast_counter_hz();
+    let c0 = e32::time::fast_counter();
+    for _ in 0..20 {
+        timer
+            .wait_high_res(1_000)
+            .map_err(|e| format!("high-res timer wait {e}"))?;
+    }
+    let us = e32::time::counter_us(c0, e32::time::fast_counter(), hz);
+    dprintln!("neotest: high-res 20 x 1 ms = {} us", us);
+    // A broad completion/reuse check; this does not establish timer precision under emulator load.
+    ensure(hz > 0 && (10_000..=1_000_000).contains(&us), || {
+        format!("20 high-res waits measured {us} us at {hz} Hz")
     })
 }
 
@@ -183,6 +209,135 @@ fn file_round_trip() -> Outcome {
     let mut buf = [0u8; 64];
     let n = f.read_at(0, &mut buf).map_err(|e| format!("reread {e}"))?;
     ensure(&buf[..n] == DATA, || format!("reopened file has {n} bytes"))
+}
+
+/// Positional I/O, metadata and replacement use the real F32 wire ABI.
+fn file_operations() -> Outcome {
+    const DIR: &str = "C:\\neofsops\\";
+    const PATH: &str = "C:\\neofsops\\first.tmp";
+    const FINAL: &str = "C:\\neofsops\\final.txt";
+    const MODIFIED: i64 = 63_000_000_000_000_000; // a whole FAT two-second interval
+    let fs = Fs::connect().map_err(|e| format!("connect {e}"))?;
+    let _ = fs.delete(PATH);
+    let _ = fs.delete(FINAL);
+    let _ = fs.rmdir(DIR);
+    fs.mkdir(DIR).map_err(|e| format!("mkdir {e}"))?;
+    {
+        let f =
+            File::create(&fs, PATH, e32::fs::mode::BIG_FILE).map_err(|e| format!("create {e}"))?;
+        ensure(
+            matches!(File::create(&fs, PATH, 0), Err(err::KERR_ALREADY_EXISTS)),
+            || "exclusive create did not report already-exists".into(),
+        )?;
+        let mut buf = [0u8; 8];
+        ensure(
+            f.read_at64(u64::MAX, &mut buf) == Err(err::KERR_ARGUMENT)
+                && f.write_at64(u64::MAX, b"x") == Err(err::KERR_ARGUMENT)
+                && f.set_size64(u64::MAX) == Err(err::KERR_ARGUMENT),
+            || "unsigned offsets above TInt64 were accepted".into(),
+        )?;
+        ensure(f.set_att(1, 1) == Err(err::KERR_ARGUMENT), || {
+            "overlapping attribute masks were accepted".into()
+        })?;
+        // RFile64 writes past EOF append at EOF rather than creating a hole. Reserve the range before testing
+        // out-of-order positional writes, just as a native RFile caller must.
+        f.set_size64(6).map_err(|e| format!("reserve size: {e}"))?;
+        f.write_at64(3, b"XYZ")
+            .map_err(|e| format!("write at 3: {e}"))?;
+        f.write_at64(0, b"abc")
+            .map_err(|e| format!("write at 0: {e}"))?;
+        f.flush().map_err(|e| format!("flush {e}"))?;
+        let n = f
+            .read_at64(0, &mut buf)
+            .map_err(|e| format!("read64 {e}"))?;
+        ensure(&buf[..n] == b"abcXYZ", || {
+            format!("positional read: {buf:?}")
+        })?;
+        let n = f
+            .read_at64(1 << 31, &mut buf)
+            .map_err(|e| format!("high read {e}"))?;
+        ensure(n == 0, || format!("read beyond EOF: {n}"))?;
+        f.set_size64(3).map_err(|e| format!("truncate {e}"))?;
+        f.set_modified(MODIFIED)
+            .map_err(|e| format!("set modified {e}"))?;
+        f.set_att(e32::fs::att::HIDDEN, 0)
+            .map_err(|e| format!("set hidden {e}"))?;
+        f.flush().map_err(|e| format!("flush truncated {e}"))?;
+    }
+    let entry = fs.entry(PATH).map_err(|e| format!("entry {e}"))?;
+    ensure(
+        entry.size == 3 && entry.modified == MODIFIED && entry.att & e32::fs::att::HIDDEN != 0,
+        || format!("metadata after flush: {entry:?}"),
+    )?;
+    {
+        let old = File::replace(&fs, FINAL, 0).map_err(|e| format!("destination {e}"))?;
+        old.write(b"old").map_err(|e| format!("old content {e}"))?;
+        old.flush().map_err(|e| format!("old flush {e}"))?;
+    }
+    let all = fs.read_dir(DIR).map_err(|e| format!("list {e}"))?;
+    let mut paged = fs
+        .read_dir_page(DIR, 0, 1)
+        .map_err(|e| format!("first page {e}"))?;
+    paged.extend(
+        fs.read_dir_page(DIR, 1, 1)
+            .map_err(|e| format!("second page {e}"))?,
+    );
+    ensure(all.len() == 2 && all == paged, || {
+        format!("paged listing: {all:?} versus {paged:?}")
+    })?;
+    ensure(
+        fs.read_dir_page(DIR, 2, 1)
+            .map_err(|e| format!("last page {e}"))?
+            .is_empty(),
+        || "page beyond the directory end was nonempty".into(),
+    )?;
+    ensure(
+        fs.read_dir_page(DIR, 0, 0)
+            .map_err(|e| format!("empty page {e}"))?
+            .is_empty()
+            && fs.read_dir_page(DIR, 0, 257) == Err(err::KERR_ARGUMENT),
+        || "page size validation".into(),
+    )?;
+    // More than two 1024-byte server batches: exercise skipping and limiting across batch boundaries.
+    for i in 0..40 {
+        let path = format!("{DIR}page{i:02}.tmp");
+        File::create(&fs, &path, 0).map_err(|e| format!("page fixture {i}: {e}"))?;
+    }
+    let all = fs.read_dir(DIR).map_err(|e| format!("batch list {e}"))?;
+    let mut paged = Vec::new();
+    for offset in (0..all.len()).step_by(7) {
+        let page = fs
+            .read_dir_page(DIR, offset as u32, 7)
+            .map_err(|e| format!("batch page {offset}: {e}"))?;
+        ensure(page.len() <= 7, || "page exceeded its bound".into())?;
+        paged.extend(page);
+    }
+    ensure(all.len() == 42 && all == paged, || {
+        format!(
+            "batch pagination: {} versus {} entries",
+            all.len(),
+            paged.len()
+        )
+    })?;
+    let late = fs
+        .read_dir_page(DIR, 25, 7)
+        .map_err(|e| format!("late page {e}"))?;
+    ensure(late == all[25..32], || "skip across server batches".into())?;
+    for i in 0..40 {
+        fs.delete(&format!("{DIR}page{i:02}.tmp"))
+            .map_err(|e| format!("page cleanup {i}: {e}"))?;
+    }
+    fs.replace_file(PATH, FINAL)
+        .map_err(|e| format!("replace-file {e}"))?;
+    let f = File::open(&fs, FINAL, 0).map_err(|e| format!("reopen {e}"))?;
+    let mut buf = [0u8; 8];
+    let n = f
+        .read_at64(0, &mut buf)
+        .map_err(|e| format!("read replacement {e}"))?;
+    ensure(&buf[..n] == b"abc", || "replacement contents".into())?;
+    drop(f);
+    fs.delete(FINAL).map_err(|e| format!("cleanup file {e}"))?;
+    fs.rmdir(DIR).map_err(|e| format!("cleanup directory {e}"))
 }
 
 /// Drives, volume size, listings (`Z:\\sys\\bin\\` too), and directory changes on C:: make, list, rename, delete.

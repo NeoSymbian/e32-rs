@@ -156,6 +156,28 @@ impl Timer {
         unsafe { sys::timer_after(self.handle, status, micros) };
     }
 
+    /// Block using the nanokernel timer resolution (1 ms on the Pixel), reusing this timer's handle.
+    /// The interval is rounded up to that resolution; scheduling can delay completion further.
+    ///
+    /// # Errors
+    /// Returns `KErrArgument` for a negative interval, or the timer's completion error.
+    ///
+    /// # Panics
+    /// The kernel panics if an asynchronous request started by [`Timer::after`] is still outstanding.
+    pub fn wait_high_res(&mut self, micros: i32) -> Result<(), i32> {
+        if micros < 0 {
+            return Err(sys::err::KERR_ARGUMENT);
+        }
+        let mut status = TRequestStatus::pending();
+        // SAFETY: the pending status stays on this stack frame until completion. The thread-bound timer is
+        // exclusively borrowed, and the kernel validates its handle and panics if an older request is still active.
+        unsafe { sys::timer_high_res(self.handle, &mut status, micros) };
+        match wait_for_request(&status) {
+            0 => Ok(()),
+            error => Err(error),
+        }
+    }
+
     /// Complete a pending request early with `KErrCancel`.
     pub fn cancel(&self) {
         sys::timer_cancel(self.handle);

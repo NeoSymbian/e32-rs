@@ -27,15 +27,23 @@ const EFS_MK_DIR: i32 = 16;
 const EFS_RM_DIR: i32 = 17;
 const EFS_DELETE: i32 = 19;
 const EFS_RENAME: i32 = 20;
+const EFS_REPLACE: i32 = 21;
+const EFS_ENTRY: i32 = 22;
 const EFS_DIR_SUB_CLOSE: i32 = 27;
 const EFS_DIR_OPEN: i32 = 49;
 const EFS_DIR_READ_PACKED: i32 = 51;
 const EFS_FINALISE_DRIVE: i32 = 95;
 const EFS_FILE_SUB_CLOSE: i32 = 28;
 const EFS_FILE_OPEN: i32 = 30;
+const EFS_FILE_CREATE: i32 = 31;
 const EFS_FILE_REPLACE: i32 = 32;
 const EFS_FILE_READ: i32 = 34;
 const EFS_FILE_WRITE: i32 = 35;
+const EFS_FILE_FLUSH: i32 = 39;
+const EFS_FILE_SET_SIZE_64: i32 = 41 | 0x1_0000;
+const EFS_FILE_SET_ATT: i32 = 43;
+const EFS_FILE_SET_MODIFIED: i32 = 45;
+const KIPC_ARG_SLOT2_DESC: i32 = 0x4_0000;
 /// `EFsFileSize | KIpcArgSlot0Desc`: the size comes back as a TInt64 in slot 0.
 const EFS_FILE_SIZE: i32 = 40 | 0x1_0000;
 /// Read/write at the current position (`I64LOW(KCurrentPosition64)`).
@@ -48,6 +56,10 @@ pub mod mode {
     pub const SHARE_ANY: u32 = 2;
     pub const READ: u32 = 0;
     pub const WRITE: u32 = 0x200;
+    /// Opt into F32's bounded write cache when the mounted drive supports it; flush before durable close.
+    pub const WRITE_BUFFERED: u32 = 0x800;
+    /// `RFile64`: allow sizes beyond 2 GiB, subject to the mounted file system's limit.
+    pub const BIG_FILE: u32 = 0x0004_0000;
 }
 
 /// `TEntry::iAtt` bits (`f32file.h`).
@@ -220,6 +232,44 @@ impl Fs {
         Dir::open(self, path, att::MATCH_ALL)?.read_all()
     }
 
+    /// A bounded page of directory entries. `offset` counts entries, not bytes. Each call reopens the directory,
+    /// so callers listing a changing directory may see changed ordering; memory use is independent of its size.
+    ///
+    /// # Errors
+    /// Returns `KErrArgument` if `max` exceeds 256, or a file-server error.
+    pub fn read_dir_page(&self, path: &str, offset: u32, max: usize) -> Result<Vec<Entry>, i32> {
+        if max > 256 {
+            return Err(err::KERR_ARGUMENT);
+        }
+        Dir::open(self, path, att::MATCH_ALL)?.read_page(offset, max)
+    }
+
+    /// Metadata for one file or directory (`RFs::Entry`). The wire layout is the ARM EABI `TEntry`:
+    /// 32 fixed bytes, a 256-unit UTF-16 name, then the high size word and reserved word.
+    pub fn entry(&self, path: &str) -> Result<Entry, i32> {
+        let mut name = [0u16; KMAX_FILE_NAME];
+        let n = utf16(path, &mut name)?;
+        let name = TPtrC16::new(&name[..n]);
+        let mut buf = [0u8; 552];
+        let mut d = TPtr8::new_full(&mut buf);
+        let mut a = TIpcArgs::new();
+        a.desc16(0, &name).des8(1, &mut d);
+        self.session.send_receive(EFS_ENTRY, &a)?;
+        if d.len() != buf.len() {
+            return Err(err::KERR_GENERAL);
+        }
+        let n = (u32_at(&buf, 28) & 0x0fff_ffff) as usize;
+        if n > KMAX_FILE_NAME {
+            return Err(err::KERR_GENERAL);
+        }
+        Ok(Entry {
+            name: text_at(&buf, 32, n),
+            att: u32_at(&buf, 0),
+            size: u64::from(u32_at(&buf, 4)) | u64::from(u32_at(&buf, 544)) << 32,
+            modified: i64_at(&buf, 8),
+        })
+    }
+
     fn path_op(&self, op: i32, path: &str, arg1: i32) -> Result<(), i32> {
         let mut name = [0u16; KMAX_FILE_NAME];
         let n = utf16(path, &mut name)?;
@@ -264,12 +314,22 @@ impl Fs {
 
     /// Rename or move a file or directory within one drive (`RFs::Rename`).
     pub fn rename(&self, from: &str, to: &str) -> Result<(), i32> {
+        self.rename_op(EFS_RENAME, from, to)
+    }
+
+    /// Replace `to` with the existing file `from` (`RFs::Replace`). Close both files first. Unlike deleting the
+    /// destination then renaming, this asks the file server to perform the replacement as one operation.
+    pub fn replace_file(&self, from: &str, to: &str) -> Result<(), i32> {
+        self.rename_op(EFS_REPLACE, from, to)
+    }
+
+    fn rename_op(&self, op: i32, from: &str, to: &str) -> Result<(), i32> {
         let (mut a16, mut b16) = ([0u16; KMAX_FILE_NAME], [0u16; KMAX_FILE_NAME]);
         let (na, nb) = (utf16(from, &mut a16)?, utf16(to, &mut b16)?);
         let (from, to) = (TPtrC16::new(&a16[..na]), TPtrC16::new(&b16[..nb]));
         let mut a = TIpcArgs::new();
         a.desc16(0, &from).desc16(1, &to);
-        self.session.send_receive(EFS_RENAME, &a).map(drop)
+        self.session.send_receive(op, &a).map(drop)
     }
 }
 
@@ -325,6 +385,36 @@ impl<'a> Dir<'a> {
     }
 }
 
+impl Dir<'_> {
+    fn read_page(&self, mut skip: u32, max: usize) -> Result<Vec<Entry>, i32> {
+        let mut out = Vec::new();
+        let mut buf = [0u8; KENTRY_ARRAY_SIZE];
+        while out.len() < max {
+            let mut d = TPtr8::new(&mut buf);
+            let mut a = TIpcArgs::new();
+            a.des8(0, &mut d).int(3, self.handle);
+            let r = self.fs.session.send_receive(EFS_DIR_READ_PACKED, &a);
+            let n = d.len();
+            if let Err(e) = r
+                && e != err::KERR_EOF
+            {
+                return Err(e);
+            }
+            for entry in parse_packed(&buf[..n]) {
+                if skip > 0 {
+                    skip -= 1;
+                } else if out.len() < max {
+                    out.push(entry);
+                }
+            }
+            if r.is_err() || n == 0 {
+                break;
+            }
+        }
+        Ok(out)
+    }
+}
+
 impl Drop for Dir<'_> {
     fn drop(&mut self) {
         let mut a = TIpcArgs::new();
@@ -370,6 +460,11 @@ impl<'a> File<'a> {
         Self::subsession(fs, EFS_FILE_OPEN, path, mode)
     }
 
+    /// Create a new file, failing with `KErrAlreadyExists` if it exists (`RFile::Create`); opened for writing.
+    pub fn create(fs: &'a Fs, path: &str, mode: u32) -> Result<Self, i32> {
+        Self::subsession(fs, EFS_FILE_CREATE, path, mode | mode::WRITE)
+    }
+
     /// Write all of `data` at the current position.
     pub fn write(&self, data: &[u8]) -> Result<(), i32> {
         let d = TPtrC8::new(data);
@@ -392,6 +487,91 @@ impl<'a> File<'a> {
             .int(3, self.handle);
         self.fs.session.send_receive(EFS_FILE_READ, &a)?;
         Ok(d.len())
+    }
+
+    /// Positional `RFile64::Read`. Invalid signed offsets are rejected before they reach the server.
+    pub fn read_at64(&self, pos: u64, buf: &mut [u8]) -> Result<usize, i32> {
+        let pos = i64::try_from(pos)
+            .map_err(|_| err::KERR_ARGUMENT)?
+            .to_le_bytes();
+        let pos = TPtrC8::new(&pos);
+        let max = i32::try_from(buf.len()).map_err(|_| err::KERR_ARGUMENT)?;
+        let mut d = TPtr8::new(buf);
+        let mut a = TIpcArgs::new();
+        a.des8(0, &mut d)
+            .int(1, max)
+            .desc8(2, &pos)
+            .int(3, self.handle);
+        self.fs
+            .session
+            .send_receive(EFS_FILE_READ | KIPC_ARG_SLOT2_DESC, &a)?;
+        Ok(d.len())
+    }
+
+    /// Write all bytes at a 64-bit offset (`RFile64::Write`). The file must have been opened for writing.
+    /// Native F32 clamps positions beyond EOF to EOF; use [`File::set_size64`] first to reserve such a range.
+    pub fn write_at64(&self, pos: u64, data: &[u8]) -> Result<(), i32> {
+        let pos = i64::try_from(pos)
+            .map_err(|_| err::KERR_ARGUMENT)?
+            .to_le_bytes();
+        let pos = TPtrC8::new(&pos);
+        let n = i32::try_from(data.len()).map_err(|_| err::KERR_ARGUMENT)?;
+        let data = TPtrC8::new(data);
+        let mut a = TIpcArgs::new();
+        a.desc8(0, &data)
+            .int(1, n)
+            .desc8(2, &pos)
+            .int(3, self.handle);
+        self.fs
+            .session
+            .send_receive(EFS_FILE_WRITE | KIPC_ARG_SLOT2_DESC, &a)
+            .map(drop)
+    }
+
+    /// Commit this file's buffered data and metadata (`RFile::Flush`). Report any storage error to the caller.
+    pub fn flush(&self) -> Result<(), i32> {
+        let mut a = TIpcArgs::new();
+        a.int(3, self.handle);
+        self.fs.session.send_receive(EFS_FILE_FLUSH, &a).map(drop)
+    }
+
+    /// Set the file's length (`RFile64::SetSize`); extension may fail at the mounted file system's size limit.
+    pub fn set_size64(&self, size: u64) -> Result<(), i32> {
+        let bytes = i64::try_from(size)
+            .map_err(|_| err::KERR_ARGUMENT)?
+            .to_le_bytes();
+        let d = TPtrC8::new(&bytes);
+        let mut a = TIpcArgs::new();
+        a.desc8(0, &d).int(3, self.handle);
+        self.fs
+            .session
+            .send_receive(EFS_FILE_SET_SIZE_64, &a)
+            .map(drop)
+    }
+
+    /// Set and clear file attribute bits (`RFile::SetAtt`). Overlapping masks return `KErrArgument`, rather than
+    /// causing the FSCLIENT panic that the C++ API raises. Changes take effect on flush/close.
+    pub fn set_att(&self, set: u32, clear: u32) -> Result<(), i32> {
+        if set & clear != 0 {
+            return Err(err::KERR_ARGUMENT);
+        }
+        let mut a = TIpcArgs::new();
+        a.int(0, set as i32)
+            .int(1, clear as i32)
+            .int(3, self.handle);
+        self.fs.session.send_receive(EFS_FILE_SET_ATT, &a).map(drop)
+    }
+
+    /// Set UTC modification time in Symbian `TTime` units (`RFile::SetModified`), committed on flush/close.
+    pub fn set_modified(&self, ttime: i64) -> Result<(), i32> {
+        let bytes = ttime.to_le_bytes();
+        let d = TPtrC8::new(&bytes);
+        let mut a = TIpcArgs::new();
+        a.desc8(0, &d).int(3, self.handle);
+        self.fs
+            .session
+            .send_receive(EFS_FILE_SET_MODIFIED, &a)
+            .map(drop)
     }
 
     pub fn size(&self) -> Result<i64, i32> {
