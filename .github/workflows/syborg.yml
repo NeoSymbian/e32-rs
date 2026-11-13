@@ -4,8 +4,19 @@ name: syborg
 # Syborg, run the EXEs from ESHELL and check their output in the serial log.
 on:
   push:
+    branches: [main]     # a PR branch runs once, as its pull_request
+    paths-ignore: ['**/*.md', 'docs/**']
   pull_request:
+    paths-ignore: ['**/*.md', 'docs/**']
   workflow_dispatch:
+  # nightly against build's and the kernel's main heads: a change there that breaks these EXEs shows up within a day
+  schedule:
+    - cron: '45 3 * * *'
+
+# a newer push to the same PR cancels its older run; main keeps one result per commit
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   syborg:
@@ -35,10 +46,17 @@ jobs:
           python3 tools/gen_execs.py ../kernelhwsrv/kernel/eka/kernel/execs.txt
           git diff --exit-code crates/e32-sys/src/execs.rs
 
-      - name: Rust (toolchain pinned by rust-toolchain.toml)
+      - name: Rust toolchain (pinned by rust-toolchain.toml)
+        working-directory: e32-rs
+        run: rustup toolchain install   # reads rust-toolchain.toml
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: e32-rs -> target
+
+      - name: Rust
         working-directory: e32-rs
         run: |
-          rustup toolchain install   # reads rust-toolchain.toml
           cargo fmt --check
           cargo clippy -p e32-sys -p e32 -p neoecho -- -D warnings
           cargo test -p e32-sys -p e32
@@ -50,6 +68,14 @@ jobs:
       - name: Fetch the Symbian sources
         working-directory: build
         run: ./fetch.sh
+
+      # the 2010 user side already built for this build commit (build CI publishes it on main), else the full build
+      - name: Prebuilt base (ghcr.io/neosymbian/userside-base:<build commit>)
+        working-directory: build
+        run: |
+          t=ghcr.io/neosymbian/userside-base:$(git rev-parse HEAD)
+          if docker pull -q "$t"; then docker run --rm -v neosymbian-build:/build "$t" cp -a /base/. /build/
+          else echo "no prebuilt base for build $(git rev-parse --short HEAD): the full build"; fi
 
       - name: Build the ROM with the Rust EXEs
         working-directory: build
