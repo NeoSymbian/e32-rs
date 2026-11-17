@@ -8,3 +8,4 @@ NEOTEST.EXE    0xE0001004  libneotest.a
 NEOR1C.EXE     0xE0001005  libneor1.a         drive=c
 NEOSRV.EXE     0xE0001006  libneosrv.a
 NEOCLI.EXE     0xE0001007  -                  rust/neocli.cpp
+NEOWB1.EXE     0xE0001008  libneowb1.a

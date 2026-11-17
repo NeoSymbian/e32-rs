@@ -31,6 +31,14 @@ pub struct JoinHandle {
 
 /// Start `f` on a new thread sharing this process's heap. Its return value becomes the thread's exit reason.
 pub fn spawn<F: FnOnce() -> i32 + Send + 'static>(f: F) -> Result<JoinHandle, i32> {
+    spawn_with_stack(STACK_SIZE, f)
+}
+
+/// [`spawn`] with a user stack of `stack_size` bytes (committed in full; the kernel's cap is `KErrTooBig`).
+pub fn spawn_with_stack<F: FnOnce() -> i32 + Send + 'static>(
+    stack_size: i32,
+    f: F,
+) -> Result<JoinHandle, i32> {
     let entry: Box<Entry> = Box::new(Box::new(f));
     let arg = Box::into_raw(entry) as *mut c_void;
     let name = TPtrC8::new(b""); // anonymous
@@ -42,7 +50,7 @@ pub fn spawn<F: FnOnce() -> i32 + Send + 'static>(f: F) -> Result<JoinHandle, i3
         i_supervisor_stack: ptr::null_mut(),
         i_supervisor_stack_size: 0,
         i_user_stack: ptr::null_mut(),
-        i_user_stack_size: STACK_SIZE,
+        i_user_stack_size: stack_size,
         i_initial_thread_priority: 0,
         i_name: name,
         i_total_size: size_of::<SThreadCreateInfo>() as i32,
