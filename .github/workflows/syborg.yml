@@ -62,7 +62,7 @@ jobs:
           cargo test -p e32-sys -p e32
           cargo arm
           mkdir -p ../build/rust
-          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv}.a ../build/rust/
+          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv,libneowb1}.a ../build/rust/  # neowb1: linked only (its tests need the AArch64 kernel, not run here)
           cp symbian/exes.txt symbian/neocli.cpp ../build/rust/
 
       - name: Fetch the Symbian sources
