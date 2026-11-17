@@ -240,6 +240,14 @@ pub fn request_signal(count: TInt) {
     unsafe { exec4::<{ slow::REQUEST_SIGNAL }>(count as u32, 0, 0, 0) };
 }
 
+/// `Exec::MathSecureRandom(TDes8&)`: fills all of `buf` from the kernel's secure RNG (`Math::RandomL`);
+/// `KErrNotReady` until the RNG has been seeded.
+pub fn math_secure_random(buf: &mut [u8]) -> TInt {
+    let mut des = TPtr8::new_full(buf);
+    // SAFETY: `des` describes `buf`, which outlives the call; the kernel writes at most its length.
+    unsafe { exec4::<{ slow::MATH_SECURE_RANDOM }>(&mut des as *mut TPtr8 as u32, 0, 0, 0) as TInt }
+}
+
 /// Fast `Exec::NTickCount()`: nanokernel ticks since boot.
 pub fn ntick_count() -> u32 {
     // SAFETY: no arguments.
