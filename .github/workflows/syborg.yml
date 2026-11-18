@@ -106,7 +106,8 @@ jobs:
           # R3: a Rust IPC server -- in-process with a Rust client, and as NEOSRV.EXE with the C++ client NEOCLI.EXE
           grep -a 'test ipc_server ... ok' $s
           grep -a 'test fs_dirs ... ok' $s
-          grep -a 'neotest: 10 passed, 0 failed' $s
+          grep -a 'test fs_watch ... ok' $s
+          grep -a 'neotest: 11 passed, 0 failed' $s
           grep -a 'neocli: 9 passed, 0 failed' $s
           grep -a 'neosrv: done' $s
           grep -a 'neocli: server exited Kill 0' $s

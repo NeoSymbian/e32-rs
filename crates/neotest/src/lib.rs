@@ -38,6 +38,7 @@ const TESTS: &[Test] = &[
     ("fs", file_round_trip),
     ("fs_ops", file_operations),
     ("fs_dirs", directories_and_drives),
+    ("fs_watch", drive_info_entries_and_notify),
     ("ipc_server", ipc_server),
 ];
 
@@ -402,6 +403,95 @@ fn directories_and_drives() -> Outcome {
     ensure(z == Err(err::KERR_ACCESS_DENIED), || {
         format!("mkdir on Z: gave {z:?}")
     })
+}
+
+/// What Files needs past R8: drive info without a volume (Z: is ROM, C: is not), attributes by name, a volume label,
+/// and change notification: it waits while nothing changes, completes on a `mkdir`, and a dropped one cancels.
+fn drive_info_entries_and_notify() -> Outcome {
+    use e32::fs::{att, notify};
+    use e32::rt::Either;
+    const DIR: &str = "C:\\neotest9\\";
+    const FILE: &str = "C:\\neotest9\\a.txt";
+    let fs = Fs::connect().map_err(|e| format!("connect {e}"))?;
+    let z = fs.drive(25).map_err(|e| format!("drive Z: {e}"))?;
+    let c = fs.drive(2).map_err(|e| format!("drive C: {e}"))?;
+    ensure(z.read_only() && !c.read_only(), || {
+        format!("Z: {z:?} C: {c:?}")
+    })?;
+    dprintln!("neotest: drive Z: {:?}, C: {:?}", z, c);
+
+    let _ = fs.delete(FILE);
+    let _ = fs.rmdir("C:\\neotest9\\sub\\");
+    let _ = fs.rmdir(DIR);
+    fs.mkdir(DIR).map_err(|e| format!("mkdir {e}"))?;
+    File::replace(&fs, FILE, e32::fs::mode::SHARE_EXCLUSIVE)
+        .and_then(|f| f.write(b"x"))
+        .map_err(|e| format!("write {e}"))?;
+    const WHEN: i64 = 63_900_000_000_000_000;
+    fs.set_entry(FILE, WHEN, att::HIDDEN | att::READ_ONLY, 0)
+        .map_err(|e| format!("set_entry {e}"))?;
+    let e = fs.entry(FILE).map_err(|e| format!("entry {e}"))?;
+    ensure(
+        e.att & (att::HIDDEN | att::READ_ONLY) == att::HIDDEN | att::READ_ONLY
+            && e.modified == WHEN,
+        || format!("after set_entry {e:?}"),
+    )?;
+    ensure(
+        fs.set_entry(FILE, WHEN, att::HIDDEN, att::HIDDEN) == Err(err::KERR_ARGUMENT),
+        || "overlapping masks".into(),
+    )?;
+    fs.set_entry(FILE, WHEN, 0, att::HIDDEN | att::READ_ONLY)
+        .map_err(|e| format!("clear {e}"))?;
+    let e = fs.entry(FILE).map_err(|e| format!("entry {e}"))?;
+    ensure(e.att & (att::HIDDEN | att::READ_ONLY) == 0, || {
+        format!("after clearing {e:?}")
+    })?;
+
+    let label = fs.volume(2).map_err(|e| format!("volume {e}"))?.name;
+    ensure(
+        fs.set_volume_label(2, "TOO-LONG-LABEL") == Err(err::KERR_BAD_NAME),
+        || "an over-long label".into(),
+    )?;
+    fs.set_volume_label(2, "NEOTEST")
+        .map_err(|e| format!("label {e}"))?;
+    let got = fs.volume(2).map_err(|e| format!("volume {e}"))?.name;
+    fs.set_volume_label(2, &label)
+        .map_err(|e| format!("label back {e}"))?;
+    ensure(got == "NEOTEST", || format!("label read back {got:?}"))?;
+
+    let watched = rt::block_on(async {
+        let mut n = core::pin::pin!(
+            fs.notify_change(notify::ENTRY, DIR)
+                .map_err(|e| format!("watch {e}"))?
+        );
+        if let Either::Left(r) = rt::select(n.as_mut(), delay(100_000)).await {
+            return Err(format!("fired with nothing changed: {r:?}"));
+        }
+        fs.mkdir("C:\\neotest9\\sub\\")
+            .map_err(|e| format!("mkdir sub {e}"))?;
+        match rt::select(n.as_mut(), delay(2_000_000)).await {
+            Either::Left(Ok(())) => Ok(()),
+            Either::Left(Err(e)) => Err(format!("notify {e}")),
+            Either::Right(()) => Err("no notice in 2 s after mkdir".into()),
+        }
+    });
+    // a dropped watch cancels instead of hanging the thread
+    let cancelled = rt::block_on(async {
+        let n = fs
+            .notify_change(notify::ENTRY, DIR)
+            .map_err(|e| format!("watch {e}"))?;
+        let _ = rt::select(n, delay(50_000)).await;
+        Ok::<(), String>(())
+    });
+    let _ = fs.rmdir("C:\\neotest9\\sub\\");
+    fs.delete(FILE).map_err(|e| format!("cleanup {e}"))?;
+    fs.rmdir(DIR).map_err(|e| format!("cleanup dir {e}"))?;
+    watched?;
+    cancelled?;
+    ensure(
+        fs.notify_change(notify::ENTRY, "").err() == Some(err::KERR_ARGUMENT),
+        || "an empty path".into(),
+    )
 }
 
 /// A Rust IPC server (NeoEcho on a thread) driven by a Rust client: version refusal, two concurrent sessions with
