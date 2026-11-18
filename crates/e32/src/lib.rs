@@ -11,7 +11,12 @@
 //!     0
 //! }
 //! ```
+//!
+//! **With std** (`target_os = "symbian"`, the NeoSymbian/rust fork, browser.md WB2): the same `main!` hands start-up
+//! to `std::os::symbian::rt::start`, std's allocator (P.I.P.S. `malloc`, the EXE's own heap) replaces [`heap`], and
+//! std's panic handler replaces ours.
 #![cfg_attr(not(test), no_std)]
+#![cfg_attr(target_os = "symbian", feature(allow_internal_unstable))]
 
 extern crate alloc;
 
@@ -23,7 +28,7 @@ mod cs;
 pub mod display;
 pub mod event;
 pub mod fs;
-#[cfg(target_arch = "arm")]
+#[cfg(all(target_arch = "arm", not(target_os = "symbian")))]
 pub mod heap;
 pub mod ipc;
 pub mod request;
@@ -125,28 +130,67 @@ pub extern "C" fn __aeabi_unwind_cpp_pr0() -> ! {
 
 /// Set up what the Rust side needs before `main` runs: the heap behind `alloc`. Called by [`main!`].
 pub fn init() {
-    #[cfg(target_arch = "arm")]
+    #[cfg(all(target_arch = "arm", not(target_os = "symbian")))]
     heap::init();
     #[cfg(all(target_arch = "arm", feature = "critical-section"))]
     cs::init();
 }
 
 /// Make `fn() -> i32` the EXE's `E32Main` (the Symbian start-up code calls it, then `User::Exit` with its result),
-/// set up the heap, and install the panic handler.
+/// set up the heap, and install the panic handler. Under std (`target_os = "symbian"`) std's start-up runs instead
+/// (`std::os::symbian::rt::start`: cleanup stack, args) and std handles panics.
 #[macro_export]
 macro_rules! main {
     ($main:path) => {
         #[unsafe(export_name = "_Z7E32Mainv")]
         pub extern "C" fn __e32_main() -> i32 {
-            $crate::init();
-            $main()
+            $crate::__start!($main)
         }
 
+        $crate::__panic_handler!();
+    };
+}
+
+// The no_std/std choice is made here, when e32 is compiled: a cfg in `main!`'s expansion would be judged in each
+// user crate.
+#[cfg(not(target_os = "symbian"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __start {
+    ($main:path) => {{
+        $crate::init();
+        $main()
+    }};
+}
+
+#[cfg(target_os = "symbian")]
+#[doc(hidden)]
+#[macro_export]
+#[allow_internal_unstable(symbian_rt)]
+macro_rules! __start {
+    ($main:path) => {{
+        $crate::init();
+        ::std::os::symbian::rt::start($main)
+    }};
+}
+
+#[cfg(not(target_os = "symbian"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __panic_handler {
+    () => {
         #[panic_handler]
         fn __e32_panic(info: &core::panic::PanicInfo) -> ! {
             $crate::on_panic(info)
         }
     };
+}
+
+#[cfg(target_os = "symbian")]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __panic_handler {
+    () => {};
 }
 
 #[cfg(test)]
