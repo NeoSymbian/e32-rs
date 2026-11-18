@@ -46,6 +46,11 @@ impl Session {
         }
         if r < 0 { Err(r) } else { Ok(r) }
     }
+
+    /// The raw handle, for futures in this crate that send with their own `TRequestStatus` (`fs::NotifyChange`).
+    pub(crate) fn handle(&self) -> i32 {
+        self.handle
+    }
 }
 
 impl Session {

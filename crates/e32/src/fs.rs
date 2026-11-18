@@ -9,9 +9,13 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 
 use crate::ipc::{Session, TIpcArgs, TVersion};
-use crate::sys::{TPtr8, TPtrC8, TPtrC16, err};
+use crate::request::{TRequestStatus, wait_for_request};
+use crate::sys::{self, TPtr8, TPtrC8, TPtrC16, err};
 
 const SERVER: &str = "!FileServer";
 const VERSION: TVersion = TVersion {
@@ -21,14 +25,19 @@ const VERSION: TVersion = TVersion {
 };
 
 // TFsMessage (inc/F32plugin.h:42-188)
+const EFS_NOTIFY_CHANGE_EX: i32 = 71;
+const EFS_NOTIFY_CHANGE_CANCEL_EX: i32 = 72;
 const EFS_DRIVE_LIST: i32 = 5;
+const EFS_DRIVE: i32 = 6;
 const EFS_VOLUME: i32 = 7;
+const EFS_SET_VOLUME: i32 = 8;
 const EFS_MK_DIR: i32 = 16;
 const EFS_RM_DIR: i32 = 17;
 const EFS_DELETE: i32 = 19;
 const EFS_RENAME: i32 = 20;
 const EFS_REPLACE: i32 = 21;
 const EFS_ENTRY: i32 = 22;
+const EFS_SET_ENTRY: i32 = 23;
 const EFS_DIR_SUB_CLOSE: i32 = 27;
 const EFS_DIR_OPEN: i32 = 49;
 const EFS_DIR_READ_PACKED: i32 = 51;
@@ -76,15 +85,51 @@ pub mod att {
 
 /// `TDriveInfo::iDriveAtt` bits (`e32const.h`).
 pub mod drive_att {
+    pub const LOCAL: u32 = 0x01;
     pub const ROM: u32 = 0x02;
     pub const REDIRECTED: u32 = 0x04;
+    pub const SUBSTED: u32 = 0x08;
     pub const INTERNAL: u32 = 0x10;
     pub const REMOVABLE: u32 = 0x20;
     pub const REMOTE: u32 = 0x40;
+    pub const LOGICALLY_REMOVABLE: u32 = 0x200;
     pub const HIDDEN: u32 = 0x400;
+    pub const EXTERNAL: u32 = 0x800;
     /// `RFs::DriveList`'s default filter: hide remote and hidden drives.
     pub(super) const DEFAULT_LIST: u32 = 0x40440;
 }
+
+/// `TDriveInfo::iMediaAtt` bits (`e32const.h`).
+pub mod media_att {
+    pub const VARIABLE_SIZE: u32 = 0x01;
+    pub const FORMATTABLE: u32 = 0x04;
+    pub const WRITE_PROTECTED: u32 = 0x08;
+    pub const LOCKED: u32 = 0x20;
+}
+
+/// `TMediaType` (`e32const.h`).
+pub mod media {
+    pub const NOT_PRESENT: u32 = 0;
+    pub const RAM: u32 = 5;
+    pub const FLASH: u32 = 6;
+    pub const ROM: u32 = 7;
+    pub const NAND_FLASH: u32 = 9;
+}
+
+/// `TNotifyType` (`f32file.h:542-600`): what a [`NotifyChange`] waits for.
+pub mod notify {
+    pub const ALL: u32 = 0x01;
+    /// An entry was added, removed or renamed (the default).
+    pub const ENTRY: u32 = 0x02;
+    pub const FILE: u32 = 0x04;
+    pub const DIR: u32 = 0x08;
+    pub const ATTRIBUTES: u32 = 0x10;
+    pub const WRITE: u32 = 0x20;
+    pub const DISK: u32 = 0x40;
+}
+
+/// Longest volume label (`KMaxVolumeNameLength`).
+pub const VOLUME_LABEL_MAX: usize = 11;
 
 /// Longest file name the server accepts (`KMaxFileName`).
 const KMAX_FILE_NAME: usize = 256;
@@ -191,6 +236,42 @@ impl Volume {
     }
 }
 
+/// A drive (`TDriveInfo`, `f32file.h:1503-1556`): 20 bytes, also the first 20 of [`Volume`]'s `TVolumeInfo`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DriveInfo {
+    /// [`media`] type.
+    pub media: u32,
+    /// `TBatteryState`: 0 not supported, 1 good, 2 low.
+    pub battery: u32,
+    /// [`drive_att`] bits.
+    pub drive_att: u32,
+    /// [`media_att`] bits.
+    pub media_att: u32,
+    /// `TConnectionBusType`: 0 internal, 1 USB.
+    pub bus: u32,
+}
+
+impl DriveInfo {
+    const SIZE: usize = 20;
+
+    pub fn decode(b: &[u8]) -> Option<Self> {
+        (b.len() >= Self::SIZE).then(|| Self {
+            media: u32_at(b, 0),
+            battery: u32_at(b, 4),
+            drive_att: u32_at(b, 8),
+            media_att: u32_at(b, 12),
+            bus: u32_at(b, 16),
+        })
+    }
+
+    /// Nothing on it can change: the ROM, or write-protected media.
+    pub fn read_only(&self) -> bool {
+        self.media == media::ROM
+            || self.drive_att & drive_att::ROM != 0
+            || self.media_att & media_att::WRITE_PROTECTED != 0
+    }
+}
+
 /// A file-server session (`RFs`). Use absolute names (`C:\…`): the default session path is the process's private
 /// directory, which usually does not exist.
 pub struct Fs {
@@ -225,6 +306,71 @@ impl Fs {
         self.session.send_receive(EFS_VOLUME, &a)?;
         let n = d.len();
         Volume::decode(&buf[..n]).ok_or(err::KERR_GENERAL)
+    }
+
+    /// What drive `drive` (0 = A:) is, without needing a mounted volume (`RFs::Drive`, `cl_cli.cpp:1212`;
+    /// `sf_svr.cpp:491-509`). A substituted drive reports `drive_att::SUBSTED`.
+    pub fn drive(&self, drive: i32) -> Result<DriveInfo, i32> {
+        let mut buf = [0u8; DriveInfo::SIZE];
+        let mut d = TPtr8::new(&mut buf);
+        let mut a = TIpcArgs::new();
+        a.des8(0, &mut d).int(1, drive);
+        self.session.send_receive(EFS_DRIVE, &a)?;
+        let n = d.len();
+        DriveInfo::decode(&buf[..n]).ok_or(err::KERR_GENERAL)
+    }
+
+    /// Set drive `drive`'s volume label, at most [`VOLUME_LABEL_MAX`] characters (`RFs::SetVolumeLabel`,
+    /// `sf_svr.cpp:588-625`). Needs DiskAdmin; a bad label gives `KErrBadName`.
+    pub fn set_volume_label(&self, drive: i32, label: &str) -> Result<(), i32> {
+        if label.encode_utf16().count() > VOLUME_LABEL_MAX {
+            return Err(err::KERR_BAD_NAME);
+        }
+        let mut name = [0u16; KMAX_FILE_NAME];
+        let n = utf16(label, &mut name)?;
+        let name = TPtrC16::new(&name[..n]);
+        let mut a = TIpcArgs::new();
+        a.desc16(0, &name).int(1, drive);
+        self.session.send_receive(EFS_SET_VOLUME, &a).map(drop)
+    }
+
+    /// Set the modified time (a `TTime`) and set/clear [`att`] bits of a file or directory by name (`RFs::SetEntry`,
+    /// `cl_cli.cpp:2436`; `sf_nbs.cpp:251-283`). The entry must not be open (`KErrInUse`). Overlapping masks return
+    /// `KErrArgument` rather than the FSCLIENT 21 panic the C++ API raises.
+    pub fn set_entry(&self, path: &str, modified: i64, set: u32, clear: u32) -> Result<(), i32> {
+        if set & clear != 0 {
+            return Err(err::KERR_ARGUMENT);
+        }
+        let mut name = [0u16; KMAX_FILE_NAME];
+        let n = utf16(path, &mut name)?;
+        let name = TPtrC16::new(&name[..n]);
+        let time = modified.to_le_bytes();
+        let time = TPtrC8::new(&time);
+        let mut a = TIpcArgs::new();
+        a.desc16(0, &name)
+            .desc8(1, &time)
+            .int(2, set as i32)
+            .int(3, clear as i32);
+        self.session.send_receive(EFS_SET_ENTRY, &a).map(drop)
+    }
+
+    /// A future that completes when something of [`notify`] kind `kind` changes under `path` (`RFs::NotifyChange` with
+    /// a path, `cl_cli.cpp:966-972`): a folder `X:\dir\` or a file; `?:` or `*:` for every drive. One change, then
+    /// it is done: make a new one to keep watching. Dropping it while it waits cancels it.
+    pub fn notify_change(&self, kind: u32, path: &str) -> Result<NotifyChange<'_>, i32> {
+        let mut name = [0u16; KMAX_FILE_NAME];
+        let n = utf16(path, &mut name)?;
+        if n == 0 {
+            return Err(err::KERR_ARGUMENT);
+        }
+        Ok(NotifyChange {
+            fs: self,
+            kind,
+            name: name[..n].to_vec(),
+            des: None,
+            started: false,
+            status: TRequestStatus::pending(),
+        })
     }
 
     /// Every entry in directory `path` (`X:\dir\`), hidden and system ones included.
@@ -330,6 +476,75 @@ impl Fs {
         let mut a = TIpcArgs::new();
         a.desc16(0, &from).desc16(1, &to);
         self.session.send_receive(op, &a).map(drop)
+    }
+}
+
+/// From [`Fs::notify_change`]: `Ok` when the change happened, `Err` if the server refused the request (a bad path,
+/// `KErrArgument` for an empty one or a directory watch on a file, `KErrPermissionDenied` for a protected folder).
+pub struct NotifyChange<'a> {
+    fs: &'a Fs,
+    kind: u32,
+    /// On the heap and `des` in the pinned future: the server reads the path after the send returns.
+    name: Vec<u16>,
+    des: Option<TPtrC16>,
+    started: bool,
+    status: TRequestStatus,
+}
+
+impl NotifyChange<'_> {
+    /// The key the server files the request under (`sf_svr.cpp:141-215`): the status's address, as `RFs` sends it.
+    fn key(&self) -> i32 {
+        &self.status as *const TRequestStatus as usize as i32
+    }
+}
+
+impl Future for NotifyChange<'_> {
+    type Output = Result<(), i32>;
+
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+        // SAFETY: nothing is moved out; `des` and `status` stay put while the request is outstanding (pinned).
+        let this = unsafe { self.get_unchecked_mut() };
+        if !this.started {
+            this.status = TRequestStatus::pending();
+            let key = this.key();
+            let des = this.des.insert(TPtrC16::new(&this.name));
+            let mut a = TIpcArgs::new();
+            a.int(0, this.kind as i32).desc16(1, des).int(2, key);
+            // SAFETY: `des`, the name it points at and `status` live in the pinned future; Drop cancels and waits.
+            let r = unsafe {
+                sys::ipc::session_send(
+                    this.fs.session.handle(),
+                    EFS_NOTIFY_CHANGE_EX,
+                    &a,
+                    &mut this.status,
+                )
+            };
+            if r != 0 {
+                return Poll::Ready(Err(r));
+            }
+            this.started = true;
+            return Poll::Pending;
+        }
+        match this.status.get() {
+            sys::KREQUEST_PENDING => Poll::Pending,
+            r if r < 0 => Poll::Ready(Err(r)),
+            _ => Poll::Ready(Ok(())),
+        }
+    }
+}
+
+impl Drop for NotifyChange<'_> {
+    fn drop(&mut self) {
+        if self.started && self.status.is_pending() {
+            // `RFs::NotifyChangeCancel(TRequestStatus&)` (`cl_cli.cpp:1016`): the server completes it with KErrCancel
+            let mut a = TIpcArgs::new();
+            a.int(0, self.key());
+            let _ = self
+                .fs
+                .session
+                .send_receive(EFS_NOTIFY_CHANGE_CANCEL_EX, &a);
+            wait_for_request(&self.status);
+        }
     }
 }
 
@@ -690,5 +905,37 @@ mod tests {
             (EFS_DIR_SUB_CLOSE, EFS_DIR_OPEN, EFS_DIR_READ_PACKED),
             (27, 49, 51)
         );
+        assert_eq!(
+            (
+                EFS_DRIVE,
+                EFS_SET_VOLUME,
+                EFS_SET_ENTRY,
+                EFS_NOTIFY_CHANGE_EX,
+                EFS_NOTIFY_CHANGE_CANCEL_EX
+            ),
+            (6, 8, 23, 71, 72)
+        );
+    }
+
+    #[test]
+    fn drive_info() {
+        let mut b = [0u8; 20];
+        b[0..4].copy_from_slice(&media::ROM.to_le_bytes());
+        b[8..12].copy_from_slice(&(drive_att::ROM | drive_att::INTERNAL).to_le_bytes());
+        b[16..20].copy_from_slice(&1u32.to_le_bytes());
+        let d = DriveInfo::decode(&b).unwrap();
+        assert_eq!((d.media, d.drive_att, d.bus), (7, 0x12, 1));
+        assert!(d.read_only());
+        let mut c = b;
+        c[0..4].copy_from_slice(&media::NAND_FLASH.to_le_bytes());
+        c[8..12].copy_from_slice(&drive_att::INTERNAL.to_le_bytes());
+        assert!(!DriveInfo::decode(&c).unwrap().read_only());
+        c[12..16].copy_from_slice(&media_att::WRITE_PROTECTED.to_le_bytes());
+        assert!(DriveInfo::decode(&c).unwrap().read_only());
+        assert_eq!(DriveInfo::decode(&b[..19]), None);
+        // the same bytes open a TVolumeInfo
+        let mut v = alloc::vec![0u8; VOLUME_INFO_SIZE];
+        v[..20].copy_from_slice(&b);
+        assert_eq!(Volume::decode(&v).unwrap().drive_att, d.drive_att);
     }
 }
