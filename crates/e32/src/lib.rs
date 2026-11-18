@@ -121,8 +121,9 @@ pub fn on_panic(info: &core::panic::PanicInfo) -> ! {
 
 /// ARM EHABI unwind tables in some objects (e.g. Slint's) name the C++ personality routine. With `panic = "abort"`
 /// nothing ever unwinds, but an unresolved reference makes the linker pull libgcc's unwinder, which needs C++ runtime
-/// symbols Symbian does not export. Defining it here keeps the unwinder out.
-#[cfg(target_arch = "arm")]
+/// symbols Symbian does not export. Defining it here keeps the unwinder out. Under std, std's backtraces need
+/// libgcc's unwinder anyway, and its real routine links instead.
+#[cfg(all(target_arch = "arm", not(target_os = "symbian")))]
 #[unsafe(no_mangle)]
 pub extern "C" fn __aeabi_unwind_cpp_pr0() -> ! {
     process::panic("RUST-UNWIND", 0)
