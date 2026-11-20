@@ -8,6 +8,9 @@
 //! - `UPPER16(DesC16 in, Des16 out)` writes `in` with ASCII letters upper-cased into `out`, completes with its length.
 //! - `WRITE_AT(Des8 out, int offset)` writes `"xyz"` into `out` at `offset`: 0, or `KErrOverflow` past its capacity.
 //! - `COUNT()` completes with the number of requests on this session so far, itself included.
+//! - `SHARE(handle fs, int file, Des8 back, Des8 seen)` adopts the client's file (`File::transfer_to_server` into slots
+//!   0 and 1), writes its first 64 bytes into `seen`, then hands the same file back (`SharedFile::transfer_to_client`
+//!   into `back`): the request completes with a file-server session handle. Rust clients only.
 //! - Anything else completes with `KErrNotSupported`; so does a connect with a major version other than 1.
 //!
 //! The server stops (its `serve` returns) when the last connected session closes.
@@ -16,6 +19,7 @@
 extern crate alloc;
 
 use core::ops::ControlFlow;
+use e32::fs::SharedFile;
 use e32::server::{Message, Service};
 use e32::sys::{TVersion, err};
 
@@ -32,6 +36,7 @@ pub mod op {
     pub const UPPER16: i32 = 3;
     pub const WRITE_AT: i32 = 4;
     pub const COUNT: i32 = 5;
+    pub const SHARE: i32 = 6;
 }
 
 #[derive(Default)]
@@ -56,6 +61,10 @@ impl Service for Echo {
 
     fn message(&mut self, s: &mut Session, m: Message) {
         s.requests += 1;
+        if m.function() == op::SHARE {
+            share(m);
+            return;
+        }
         let r = match m.function() {
             op::ADD => Ok(m.int(0).wrapping_add(m.int(1))),
             op::REVERSE8 => m.read8_vec(0).and_then(|mut v| {
@@ -85,4 +94,21 @@ impl Service for Echo {
             ControlFlow::Continue(())
         }
     }
+}
+
+/// `SHARE`: the file comes in by handle, is read here (another process), and goes back by handle.
+fn share(m: Message) {
+    let file = match SharedFile::adopt_from_client(&m, 0, 1) {
+        Ok(f) => f,
+        Err(e) => return m.complete(e),
+    };
+    let mut seen = [0u8; 64];
+    let n = match file.file().read_at(0, &mut seen) {
+        Ok(n) => n,
+        Err(e) => return m.complete(e),
+    };
+    if let Err(e) = m.write8(3, &seen[..n], 0) {
+        return m.complete(e);
+    }
+    let _ = file.transfer_to_client(m, 2); // completes `m` either way
 }

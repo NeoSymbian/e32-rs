@@ -10,12 +10,14 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::future::Future;
+use core::mem::ManuallyDrop;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
 use crate::ipc::{Session, TIpcArgs, TVersion};
 use crate::request::{TRequestStatus, wait_for_request};
-use crate::sys::{self, TPtr8, TPtrC8, TPtrC16, err};
+use crate::server::Message;
+use crate::sys::{self, TPtr8, TPtr16, TPtrC8, TPtrC16, err};
 
 const SERVER: &str = "!FileServer";
 const VERSION: TVersion = TVersion {
@@ -57,6 +59,13 @@ const KIPC_ARG_SLOT2_DESC: i32 = 0x4_0000;
 const EFS_FILE_SIZE: i32 = 40 | 0x1_0000;
 /// Read/write at the current position (`I64LOW(KCurrentPosition64)`).
 const KCURRENT_POSITION: i32 = -1;
+const EFS_FILE_DUPLICATE: i32 = 96;
+const EFS_FILE_ADOPT: i32 = 97;
+const EFS_FILE_FULL_NAME: i32 = 105;
+/// `TFsFileAdopt` modes (`inc/f32file_private.h:102`): adopt as a 32-bit `RFile` (not `RFile64`).
+const KFILE_ADOPT32: i32 = 0;
+/// The file server's secure ID (`KFileServerUidValue`), what `KFileServerPolicy` checks a passed session against.
+const FILE_SERVER_SID: u32 = 0x1000_39E3;
 
 /// `TFileMode` bits (`f32file.h`).
 pub mod mode {
@@ -283,6 +292,12 @@ impl Fs {
         Ok(Self {
             session: Session::connect(SERVER, VERSION)?,
         })
+    }
+
+    /// Let this session's files be passed to other processes (`RFs::ShareProtected`): needed before
+    /// [`File::transfer_to_server`] and [`SharedFile::transfer_to_client`]. The session stays usable as before.
+    pub fn share_protected(&mut self) -> Result<(), i32> {
+        self.session.share_protected()
     }
 
     /// One `TDriveList` byte per drive A..Z: 0 when absent, else its attribute byte (`sf_svr.cpp:380-466`).
@@ -680,6 +695,38 @@ impl<'a> File<'a> {
         Self::subsession(fs, EFS_FILE_CREATE, path, mode | mode::WRITE)
     }
 
+    /// A second handle to this file on the same session (`RFile::DuplicateHandle`, `cl_file.cpp:255`): what
+    /// `transfer_to_*` pass on, so this `File` stays open and independent of the receiver.
+    fn duplicate_handle(&self) -> Result<i32, i32> {
+        new_subsession(&self.fs.session, EFS_FILE_DUPLICATE, self.handle, 1)
+    }
+
+    /// Hand this file to a server in one request (`RFile::TransferToServer`, `cl_file.cpp:312`): the session goes in
+    /// slot `fs_slot` as a handle, a duplicate of the file's handle in `file_slot`. The session must be shared
+    /// ([`Fs::share_protected`]); the server takes the file with [`SharedFile::adopt_from_client`].
+    pub fn transfer_to_server(
+        &self,
+        args: &mut TIpcArgs<'_>,
+        fs_slot: usize,
+        file_slot: usize,
+    ) -> Result<(), i32> {
+        let dup = self.duplicate_handle()?;
+        args.handle(fs_slot, self.fs.session.handle())
+            .int(file_slot, dup);
+        Ok(())
+    }
+
+    /// The file's full name, drive included (`RFile::FullName`, `EFsFileFullName`).
+    pub fn full_name(&self) -> Result<String, i32> {
+        let mut buf = [0u16; KMAX_FILE_NAME];
+        let mut d = TPtr16::new(&mut buf);
+        let mut a = TIpcArgs::new();
+        a.des16(0, &mut d).int(3, self.handle);
+        self.fs.session.send_receive(EFS_FILE_FULL_NAME, &a)?;
+        let n = d.len();
+        Ok(String::from_utf16_lossy(&buf[..n]))
+    }
+
     /// Write all of `data` at the current position.
     pub fn write(&self, data: &[u8]) -> Result<(), i32> {
         let d = TPtrC8::new(data);
@@ -807,6 +854,85 @@ impl Drop for File<'_> {
     }
 }
 
+/// A subsession made from two integer arguments; its handle comes back in slot 3 (`RSubSessionBase::CreateSubSession`).
+fn new_subsession(session: &Session, op: i32, a0: i32, a1: i32) -> Result<i32, i32> {
+    let mut reply = [0u8; 4];
+    let mut reply_des = TPtr8::new(&mut reply);
+    let mut a = TIpcArgs::new();
+    a.int(0, a0).int(1, a1).des8(3, &mut reply_des);
+    session.send_receive(op, &a)?;
+    if reply_des.len() != 4 {
+        return Err(err::KERR_GENERAL);
+    }
+    Ok(i32::from_le_bytes(reply))
+}
+
+/// A file passed from another process, with the session it came on: both close on drop (Symbian's auto-close
+/// subsession). Read and write it through [`SharedFile::file`].
+pub struct SharedFile {
+    fs: Fs,
+    handle: i32,
+}
+
+impl SharedFile {
+    fn adopt(session: Session, file_handle: i32) -> Result<Self, i32> {
+        let handle = new_subsession(&session, EFS_FILE_ADOPT, file_handle, KFILE_ADOPT32)?;
+        Ok(Self {
+            fs: Fs { session },
+            handle,
+        })
+    }
+
+    /// In a server: take the file a client sent with [`File::transfer_to_server`] (`RFile::AdoptFromClient`,
+    /// `cl_file.cpp:93`). The session must be a file-server one (`KFileServerPolicy`).
+    pub fn adopt_from_client(msg: &Message, fs_slot: usize, file_slot: usize) -> Result<Self, i32> {
+        let file_handle = msg.int(file_slot);
+        let session = Session::adopt(msg.open_session(fs_slot), FILE_SERVER_SID)?;
+        Self::adopt(session, file_handle)
+    }
+
+    /// In a client: take the file a server completed a request with ([`SharedFile::transfer_to_client`]):
+    /// `fs_handle` is the request's result, `file_handle` what it wrote into the 4-byte descriptor
+    /// (`RFile::AdoptFromServer`, `cl_file.cpp:62`).
+    pub fn adopt_from_server(fs_handle: i32, file_handle: i32) -> Result<Self, i32> {
+        Self::adopt(Session::adopt(fs_handle, FILE_SERVER_SID)?, file_handle)
+    }
+
+    /// In a server: answer `msg` with this file (`RFile::TransferToClient`, `cl_file.cpp:357`): a duplicate handle
+    /// goes into the client's 4-byte descriptor in `file_slot`, and the request completes with the session. This file
+    /// stays open here. On an error the message completes with it.
+    pub fn transfer_to_client(&self, msg: Message, file_slot: usize) -> Result<(), i32> {
+        let r = self
+            .file()
+            .duplicate_handle()
+            .and_then(|dup| msg.write8(file_slot, &dup.to_le_bytes(), 0));
+        match r {
+            Ok(()) => {
+                msg.complete_with_handle(self.fs.session.handle());
+                Ok(())
+            }
+            Err(e) => {
+                msg.complete(e);
+                Err(e)
+            }
+        }
+    }
+
+    /// The file, for reading and writing; closing stays with the `SharedFile`.
+    pub fn file(&self) -> ManuallyDrop<File<'_>> {
+        ManuallyDrop::new(File {
+            fs: &self.fs,
+            handle: self.handle,
+        })
+    }
+}
+
+impl Drop for SharedFile {
+    fn drop(&mut self) {
+        drop(ManuallyDrop::into_inner(self.file())); // the subsession; `fs` (the session) closes after
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -914,6 +1040,16 @@ mod tests {
                 EFS_NOTIFY_CHANGE_CANCEL_EX
             ),
             (6, 8, 23, 71, 72)
+        );
+        // TFsMessage counted in inc/F32plugin.h: EFsFinaliseDrive 95, then EFsFileDuplicate, EFsFileAdopt; 105.
+        assert_eq!(
+            (
+                EFS_FINALISE_DRIVE + 1,
+                EFS_FILE_DUPLICATE,
+                EFS_FILE_ADOPT,
+                EFS_FILE_FULL_NAME
+            ),
+            (96, 96, 97, 105)
         );
     }
 
