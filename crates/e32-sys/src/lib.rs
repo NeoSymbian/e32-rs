@@ -69,6 +69,19 @@ pub enum TOwnerType {
     Thread = 1,
 }
 
+/// An acquire barrier between cores. ARMv5TE has no DMB and Rust gives it no atomics, but every CPU NeoSymbian runs
+/// on is ARMv7 or later, so the instruction goes in as a raw word there.
+#[inline(always)]
+pub fn acquire_barrier() {
+    #[cfg(all(target_arch = "arm", not(target_feature = "v7")))]
+    // SAFETY: DMB ISH (0xf57ff05b, ARM state) only orders memory; no `nomem`, so it is a compiler barrier too.
+    unsafe {
+        core::arch::asm!(".inst 0xf57ff05b", options(nostack, preserves_flags))
+    };
+    #[cfg(not(all(target_arch = "arm", not(target_feature = "v7"))))]
+    core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
+}
+
 /// `TRequestStatus` (`e32cmn.h`): the kernel completes a request by writing `i_status` (4 bytes at offset 0) and
 /// signalling the thread's request semaphore.
 #[repr(C)]
@@ -85,10 +98,17 @@ impl TRequestStatus {
             i_flags: 0,
         }
     }
-    /// Read through a volatile load: the kernel writes it behind the compiler's back.
+    /// Read through a volatile load: the kernel writes it behind the compiler's back. A completed status is
+    /// followed by an acquire barrier: the kernel may have completed it on another core, after writing the
+    /// request's results (US1, docs user-side-smp.md), and a poll sees it without the semaphore wait that would
+    /// otherwise order those reads.
     pub fn get(&self) -> TInt {
         // SAFETY: a plain aligned i32 inside `self`.
-        unsafe { core::ptr::read_volatile(&self.i_status) }
+        let v = unsafe { core::ptr::read_volatile(&self.i_status) };
+        if v != KREQUEST_PENDING {
+            acquire_barrier();
+        }
+        v
     }
     pub fn is_pending(&self) -> bool {
         self.get() == KREQUEST_PENDING
