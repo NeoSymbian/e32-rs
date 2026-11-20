@@ -58,6 +58,62 @@ impl<'a> TIpcArgs<'a> {
     pub fn desc16(&mut self, slot: usize, d: &'a TPtrC16) -> &mut Self {
         self.set(slot, d as *const _ as usize as TInt, ArgType::DesC16)
     }
+    /// A handle the server may open in its own process (`TIpcArgs::Set(TInt, RHandleBase)`, `e32cmn.inl:6723`).
+    pub fn handle(&mut self, slot: usize, h: TInt) -> &mut Self {
+        self.set(slot, h, ArgType::Handle)
+    }
+}
+
+/// `TIpcSessionType` (`e32const.h:3083`).
+pub const EIPC_SESSION_GLOBAL_SHARABLE: TInt = 2;
+
+/// `Exec::SessionShare(TInt& aHandle, TInt aMode)` (`sipc.cpp:1836`): make a session sharable. A thread-owned handle
+/// becomes a new process-owned one, written back to `handle`; `EIPC_SESSION_GLOBAL_SHARABLE` also makes it a protected
+/// object that other processes may open. The server must allow that mode, or KErrPermissionDenied.
+pub fn session_share(handle: &mut TInt, mode: TInt) -> TInt {
+    // SAFETY: `handle` is a valid, writable TInt for the call.
+    unsafe {
+        crate::swi::exec4::<{ crate::execs::slow::SESSION_SHARE }>(
+            handle as *mut TInt as u32,
+            mode as u32,
+            0,
+            0,
+        ) as TInt
+    }
+}
+
+/// `TObjectType::ESession` (`u32std.h:227`).
+pub const EOBJECT_SESSION: TInt = 8;
+
+/// `Exec::MessageOpenObject(TInt aMsg, TObjectType, TInt aParam, TOwnerType)`: open, in this process, the object whose
+/// handle the client put in argument `param` (sent as a handle argument). A new handle or a negative error.
+pub fn message_open_object(msg: TInt, kind: TInt, param: TInt) -> TInt {
+    // SAFETY: plain integers; the kernel validates the message and the client's handle. Owner 0 = EOwnerProcess.
+    unsafe {
+        crate::swi::exec4::<{ crate::execs::slow::MESSAGE_OPEN_OBJECT }>(
+            msg as u32,
+            kind as u32,
+            param as u32,
+            0,
+        ) as TInt
+    }
+}
+
+/// `Exec::SessionSecurityInfo(TInt aSession, SSecurityInfo&)`: the secure ID of the session's server (the first word of
+/// the 16-byte `SSecurityInfo`; vendor ID and capabilities follow), as `TSecurityPolicy::CheckPolicy(RSessionBase)`
+/// reads it.
+pub fn session_server_sid(session: TInt) -> Result<u32, TInt> {
+    let mut info = [0u32; 4];
+    // SAFETY: `info` is 16 writable bytes, the size of SSecurityInfo.
+    let r = unsafe {
+        crate::swi::exec4::<{ crate::execs::slow::SESSION_SECURITY_INFO }>(
+            session as u32,
+            info.as_mut_ptr() as u32,
+            0,
+            0,
+        ) as TInt
+    };
+    if r < 0 { Err(r) } else { Ok(info[0]) }
 }
 
 /// `TVersion` (`e32cmn.h`) `{ TInt8 major, TInt8 minor, TInt16 build }` packed into one word, as `CreateSession`
@@ -478,6 +534,10 @@ mod tests {
         w.desc8(0, &data).int(1, 1).int(2, -1);
         assert_eq!(w.i_flags, 6);
         assert_eq!(core::mem::size_of::<TIpcArgs>(), 20);
+        // RFile::TransferToServer(args, 0, 1): session handle (EHandle = 1) in slot 0, file handle int in slot 1
+        let mut t = TIpcArgs::new();
+        t.handle(0, 0x4000_0123).int(1, 7);
+        assert_eq!((t.i_flags, t.i_args[0]), (1, 0x4000_0123));
     }
 
     #[test]

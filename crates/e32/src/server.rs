@@ -218,6 +218,13 @@ impl Message {
         ok_len(r)
     }
 
+    /// Open, in this process, the session the client sent as a handle argument in slot `param`
+    /// (`RSessionBase::Open(RMessagePtr2, TInt, …)`, `us_ksvr.cpp:2422`); wrap it with `ipc::Session::adopt`, which
+    /// checks whose server it is. The client must have shared it (`Session::share_protected`).
+    pub fn open_session(&self, param: usize) -> i32 {
+        ipc::message_open_object(self.raw.i_handle, ipc::EOBJECT_SESSION, param as i32)
+    }
+
     /// Reply to the client: `reason` becomes its request's completion value.
     pub fn complete(mut self, reason: i32) {
         ipc::message_complete(self.raw.i_handle, reason);

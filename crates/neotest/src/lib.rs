@@ -10,7 +10,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use e32::dprintln;
-use e32::fs::{File, Fs};
+use e32::fs::{File, Fs, SharedFile};
 use e32::ipc::{Session, TIpcArgs, TVersion};
 use e32::server::{Server, serve};
 use e32::sync::{Mutex, Semaphore};
@@ -40,6 +40,7 @@ const TESTS: &[Test] = &[
     ("fs_dirs", directories_and_drives),
     ("fs_watch", drive_info_entries_and_notify),
     ("ipc_server", ipc_server),
+    ("fs_share", file_share),
 ];
 
 fn main() -> i32 {
@@ -592,4 +593,79 @@ fn ipc_server() -> Outcome {
     drop(b);
     let code = server.join();
     ensure(code == 0, || format!("server thread ended with {code}"))
+}
+
+/// A file passed by handle to another process and back (`RFile::TransferToServer` / `AdoptFromClient` /
+/// `TransferToClient` / `AdoptFromServer`): NEOSRV (started here, NeoEcho's `SHARE`) reads a file in this process's
+/// private folder through the handle and returns it; the returned file reads the same and keeps its name.
+fn file_share() -> Outcome {
+    const DIR: &str = "C:\\private\\e0001004\\";
+    const PATH: &str = "C:\\private\\e0001004\\share.txt";
+    const DATA: &[u8] = b"passed by handle";
+    let mut fs = Fs::connect().map_err(|e| format!("connect {e}"))?;
+    fs.share_protected().map_err(|e| format!("share {e}"))?;
+    for dir in ["C:\\private\\", DIR] {
+        match fs.mkdir(dir) {
+            Ok(()) | Err(err::KERR_ALREADY_EXISTS) => {}
+            Err(e) => return Err(format!("mkdir {dir} {e}")),
+        }
+    }
+    {
+        let f = File::replace(&fs, PATH, e32::fs::mode::SHARE_ANY)
+            .map_err(|e| format!("replace {e}"))?;
+        f.write(DATA).map_err(|e| format!("write {e}"))?;
+    }
+    let f = File::open(&fs, PATH, e32::fs::mode::SHARE_ANY).map_err(|e| format!("open {e}"))?;
+
+    let p = e32::process::Process::spawn("NEOSRV.EXE", "").map_err(|e| format!("spawn {e}"))?;
+    p.resume();
+    let mut echo = Err(0);
+    for _ in 0..40 {
+        echo = Session::connect(neoecho::NAME, neoecho::VERSION);
+        if echo.is_ok() {
+            break;
+        }
+        sleep(50_000);
+    }
+    let echo = echo.map_err(|e| format!("connect to neosrv {e}"))?;
+
+    let mut back = [0u8; 4];
+    let mut back_d = TPtr8::new(&mut back);
+    let mut seen = [0u8; 64];
+    let mut seen_d = TPtr8::new(&mut seen);
+    let mut args = TIpcArgs::new();
+    f.transfer_to_server(&mut args, 0, 1)
+        .map_err(|e| format!("transfer {e}"))?;
+    args.des8(2, &mut back_d).des8(3, &mut seen_d);
+    let fs_handle = echo
+        .send_receive(op::SHARE, &args)
+        .map_err(|e| format!("SHARE {e}"))?;
+    let n = seen_d.len();
+    ensure(&seen[..n] == DATA, || {
+        format!("the server read {:?}", &seen[..n])
+    })?;
+    ensure(back_d.len() == 4, || {
+        format!("file handle of {} bytes", back_d.len())
+    })?;
+    let returned = SharedFile::adopt_from_server(fs_handle, i32::from_le_bytes(back))
+        .map_err(|e| format!("adopt {e}"))?;
+    let mut buf = [0u8; 64];
+    let n = returned
+        .file()
+        .read_at(0, &mut buf)
+        .map_err(|e| format!("read {e}"))?;
+    ensure(&buf[..n] == DATA, || {
+        format!("the returned file read {:?}", &buf[..n])
+    })?;
+    let name = returned
+        .file()
+        .full_name()
+        .map_err(|e| format!("name {e}"))?;
+    ensure(name.eq_ignore_ascii_case(PATH), || {
+        format!("returned file is {name}")
+    })?;
+    drop(returned);
+    drop(echo); // its last session: NEOSRV exits
+    drop(f);
+    fs.delete(PATH).map_err(|e| format!("delete {e}"))
 }

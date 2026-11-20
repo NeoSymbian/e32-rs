@@ -47,9 +47,37 @@ impl Session {
         if r < 0 { Err(r) } else { Ok(r) }
     }
 
-    /// The raw handle, for futures in this crate that send with their own `TRequestStatus` (`fs::NotifyChange`).
-    pub(crate) fn handle(&self) -> i32 {
+    /// The raw handle: for futures in this crate that send with their own `TRequestStatus` (`fs::NotifyChange`), and
+    /// for passing the session to a server as a handle argument (`TIpcArgs::handle`).
+    pub fn handle(&self) -> i32 {
         self.handle
+    }
+
+    /// Take ownership of a session handle opened elsewhere: one a server opened from a client's message
+    /// (`server::Message::open_session`), or one a request completed with (`RSessionBase::SetReturnedHandle`).
+    /// It is checked to belong to the server with secure ID `server_sid` (`TSecurityPolicy::CheckPolicy`), else it is
+    /// closed and the result is KErrPermissionDenied.
+    pub fn adopt(handle: i32, server_sid: u32) -> Result<Self, i32> {
+        if handle < 0 {
+            return Err(handle);
+        }
+        let s = Self {
+            handle,
+            _thread_bound: PhantomData,
+        };
+        match ipc::session_server_sid(handle) {
+            Ok(sid) if sid == server_sid => Ok(s),
+            Ok(_) => Err(sys::err::KERR_PERMISSION_DENIED),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Make this session usable by other processes, as a protected object (`RSessionBase::ShareProtected`): the
+    /// handle becomes process-owned (its number changes) and can be passed to a server with `TIpcArgs::handle`. The
+    /// server must accept globally sharable sessions (the file server does).
+    pub fn share_protected(&mut self) -> Result<(), i32> {
+        let r = ipc::session_share(&mut self.handle, ipc::EIPC_SESSION_GLOBAL_SHARABLE);
+        if r < 0 { Err(r) } else { Ok(()) }
     }
 }
 
