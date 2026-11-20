@@ -604,9 +604,11 @@ fn file_share() -> Outcome {
     const DATA: &[u8] = b"passed by handle";
     let mut fs = Fs::connect().map_err(|e| format!("connect {e}"))?;
     fs.share_protected().map_err(|e| format!("share {e}"))?;
-    match fs.mkdir(DIR) {
-        Ok(()) | Err(err::KERR_ALREADY_EXISTS) => {}
-        Err(e) => return Err(format!("mkdir {e}")),
+    for dir in ["C:\\private\\", DIR] {
+        match fs.mkdir(dir) {
+            Ok(()) | Err(err::KERR_ALREADY_EXISTS) => {}
+            Err(e) => return Err(format!("mkdir {dir} {e}")),
+        }
     }
     {
         let f = File::replace(&fs, PATH, e32::fs::mode::SHARE_ANY)
