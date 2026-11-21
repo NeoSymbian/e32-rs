@@ -30,7 +30,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: NeoSymbian/build
-          ref: us2-armv8-core   # until NeoSymbian/build's US2 PR is merged
           path: build
 
       # also the QEMU virt test driver (baseport/arm64/tools/test-fshell-qemu.py), from the same kernel main
