@@ -1,7 +1,7 @@
 name: syborg
 
-# Build the Rust staticlibs, link them into Symbian EXEs with NeoSymbian/build, boot the 2010 ROM on QEMU
-# Syborg, run the EXEs from ESHELL and check their output in the serial log.
+# Build the Rust staticlibs, link them into Symbian EXEs with NeoSymbian/build, boot the ROM's user side on QEMU virt
+# with our AArch64 kernel, run the EXEs through fshell and check their exit statuses and output.
 on:
   push:
     branches: [main]     # a PR branch runs once, as its pull_request
@@ -83,42 +83,9 @@ jobs:
         working-directory: build
         run: ./build.sh
 
-      - name: Boot and run neohello, neor1, neopanic, neotest, neor1c (from C:), neocli (starts neosrv)
-        working-directory: build
-        run: RUN=neohello,neor1,neopanic,neotest,neor1c,neocli SECS=220 ./boot.sh
-
-      - name: Check the output
-        working-directory: build
-        run: |
-          s=out/serial.log
-          # R0: C++ E32Main calling Rust
-          grep -a 'neo: start' $s
-          grep -a 'hello from Rust' $s
-          grep -a 'neo: rust_hello(6, 7) = 42' $s
-          # R1: Rust only -- exec calls, exit code, panic
-          grep -a 'r1: hello from pure Rust' $s
-          grep -a 'r1: 6 \* 7 = 42' $s
-          grep -a "\[EKERN\] exit 'NEOR1.EXE.*reason=0x0000002a" $s
-          grep -a 'rust panic: deliberate panic 7' $s
-          grep -a "\[EKERN\] panic in 'NEOPANIC.EXE.*category='RUST'" $s
-          # R2: heap, timers, async, threads, locks, file-server IPC; an EXE loaded from C:
-          for t in alloc timer timer_high_res async threads semaphore fs fs_ops; do grep -a "test $t ... ok" $s; done
-          ! grep -aq "\[EKERN\] exit 'NEOTEST.EXE\[[0-9a-f]*\]0001::Main'" $s
-          grep -a "\[EKERN\] exit 'NEOR1C.EXE.*reason=0x0000002a" $s
-          # R3: a Rust IPC server -- in-process with a Rust client, and as NEOSRV.EXE with the C++ client NEOCLI.EXE
-          grep -a 'test ipc_server ... ok' $s
-          grep -a 'test fs_dirs ... ok' $s
-          grep -a 'test fs_watch ... ok' $s
-          grep -a 'test fs_share ... ok' $s
-          grep -a 'neotest: 12 passed, 0 failed' $s
-          grep -a 'neocli: 9 passed, 0 failed' $s
-          grep -a 'neosrv: done' $s
-          grep -a 'neocli: server exited Kill 0' $s
-          ! grep -aq "\[EKERN\] \(exit\|panic in\) 'NEOSRV\|\[EKERN\] \(exit\|panic in\) 'NEOCLI" $s
-          ! grep -aq 'K::Fault\|Kern::Fault' $s
-
-      # the same user side on our AArch64 kernel, QEMU virt with 4 Cortex-A55 (docs user-side-smp.md US6a): the kernel
-      # the phone runs, SMP, ARMv8; this ROM has no SYSSTART, so its console is eshell, where the driver starts fshell
+      # the ROM's user side on our AArch64 kernel, QEMU virt with 4 Cortex-A55 (docs user-side-smp.md US6a): the kernel
+      # the phone runs, SMP, ARMv8. Not Syborg: its 2010 kernel can't run the ARMv8 user side (VFP, user-side thread
+      # data). This ROM has no SYSSTART, so its console is eshell, where the driver starts fshell
       - name: The AArch64 kernel for QEMU virt, with this user side
         working-directory: build
         run: KERNEL=src/oss.FCL.sf.os.kernelhwsrv ./neo kernel qemu
@@ -166,9 +133,6 @@ jobs:
         with:
           name: syborg
           path: |
-            build/out/fb.png
-            build/out/serial.log
             build/out/log/
-            build/out/qemu-monitor.log
             build/out/virt.log
             build/out/virt-serial.log
