@@ -83,9 +83,9 @@ jobs:
         working-directory: build
         run: ./build.sh
 
-      - name: Boot and run neohello, neor1, neopanic, neotest, neor1c (from C:), neocli (starts neosrv), neotrap
+      - name: Boot and run neohello, neor1, neopanic, neotest, neor1c (from C:), neocli (starts neosrv)
         working-directory: build
-        run: RUN=neohello,neor1,neopanic,neotest,neor1c,neocli,neotrap SECS=240 ./boot.sh
+        run: RUN=neohello,neor1,neopanic,neotest,neor1c,neocli SECS=220 ./boot.sh
 
       - name: Check the output
         working-directory: build
@@ -115,8 +115,6 @@ jobs:
           grep -a 'neosrv: done' $s
           grep -a 'neocli: server exited Kill 0' $s
           ! grep -aq "\[EKERN\] \(exit\|panic in\) 'NEOSRV\|\[EKERN\] \(exit\|panic in\) 'NEOCLI" $s
-          # US2: a TRAP keeps d8-d15 across a leave (NeoTrapFp)
-          grep -a 'neotrap: 4 passed, 0 failed' $s
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
       # the same user side on our AArch64 kernel, QEMU virt with 4 Cortex-A55 (docs user-side-smp.md US6a): the kernel
@@ -159,6 +157,7 @@ jobs:
           grep -a 'neocli: 9 passed, 0 failed' $s
           grep -a 'neocli: server exited Kill 0' $s
           grep -a 'neowb1: 6 passed, 0 failed' $s
+          # US2: a TRAP keeps d8-d15 across a leave (NeoTrapFp); virt only: the Syborg kernel has no VFP support
           grep -a 'neotrap: 4 passed, 0 failed' $s
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
