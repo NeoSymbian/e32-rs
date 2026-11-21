@@ -12,7 +12,7 @@
 //! }
 //! ```
 //!
-//! **With std** (`target_os = "symbian"`, the NeoSymbian/rust fork, browser.md WB2): the same `main!` hands start-up
+//! **With std** (`target_os = "symbian"`, the NeoSymbian/rust fork, browser/wb2-std.md WB2): the same `main!` hands start-up
 //! to `std::os::symbian::rt::start`, std's allocator (P.I.P.S. `malloc`, the EXE's own heap) replaces [`heap`], and
 //! std's panic handler replaces ours.
 #![cfg_attr(not(test), no_std)]

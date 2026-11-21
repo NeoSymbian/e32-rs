@@ -3,7 +3,7 @@
 #
 #   cargo arm    the Symbian staticlibs: target/armv5te-none-eabi/release/lib*.a (core built from source: tier 3)
 #   cargo arm7   the same for ARMv7-A/ARMv8-AArch32 with VFPv3 + NEON, still the soft-float calling convention (softfp):
-#                targets/armv7a-neosymbian-eabi.json (browser.md WB2a; the kernel switches FP/NEON per thread since WB1).
+#                targets/armv7a-neosymbian-eabi.json (browser/wb2-std.md WB2a; the kernel switches FP/NEON per thread since WB1).
 #                +no-movt: E32 images relocate whole words only, so no MOVW/MOVT address pairs (reloc 43/44).
 #   cargo test   host unit tests of the pure parts (e32-sys, e32)
 [alias]

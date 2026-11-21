@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! WB1 on-target tests (`NEOWB1.EXE`, docs `browser.md` WB1): what Servo needs from the kernel. Reports like neotest,
+//! WB1 on-target tests (`NEOWB1.EXE`, docs `browser/wb1-kernel.md`): what Servo needs from the kernel. Reports like neotest,
 //! `test <name> ... ok|FAILED: <why>` and `neowb1: N passed, M failed`. Exit code = failures.
 //!
 //! The FP tests use VFPv3/NEON (`.fpu neon` in the asm only): the crate stays soft-float ARMv5TE, so no compiled code
