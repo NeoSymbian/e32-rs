@@ -64,7 +64,7 @@ jobs:
           cargo arm
           mkdir -p ../build/rust
           cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv,libneowb1}.a ../build/rust/  # neowb1: its tests need the AArch64 kernel, so they run on virt only
-          cp symbian/exes.txt symbian/neocli.cpp ../build/rust/
+          cp symbian/exes.txt symbian/neocli.cpp symbian/neotrap.cpp ../build/rust/
 
       - name: Fetch the Symbian sources
         working-directory: build
@@ -82,9 +82,9 @@ jobs:
         working-directory: build
         run: ./build.sh
 
-      - name: Boot and run neohello, neor1, neopanic, neotest, neor1c (from C:), neocli (starts neosrv)
+      - name: Boot and run neohello, neor1, neopanic, neotest, neor1c (from C:), neocli (starts neosrv), neotrap
         working-directory: build
-        run: RUN=neohello,neor1,neopanic,neotest,neor1c,neocli SECS=220 ./boot.sh
+        run: RUN=neohello,neor1,neopanic,neotest,neor1c,neocli,neotrap SECS=240 ./boot.sh
 
       - name: Check the output
         working-directory: build
@@ -114,6 +114,8 @@ jobs:
           grep -a 'neosrv: done' $s
           grep -a 'neocli: server exited Kill 0' $s
           ! grep -aq "\[EKERN\] \(exit\|panic in\) 'NEOSRV\|\[EKERN\] \(exit\|panic in\) 'NEOCLI" $s
+          # US2: a TRAP keeps d8-d15 across a leave (NeoTrapFp)
+          grep -a 'neotrap: 4 passed, 0 failed' $s
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
       # the same user side on our AArch64 kernel, QEMU virt with 4 Cortex-A55 (docs user-side-smp.md US6a): the kernel
@@ -131,7 +133,7 @@ jobs:
           K=$PWD/src/oss.FCL.sf.os.kernelhwsrv
           docker run --rm --user "$(id -u):$(id -g)" -v "$K:/kernel" -v "$PWD/../kernelhwsrv/baseport/arm64/tools:/tools:ro" \
             -v neosymbian-build:/vol:ro -e OUT=/kernel/out/ekern-qemu "$BUILD_IMAGE" python3 /tools/test-fshell-qemu.py 900 \
-            --cdrive /vol --run neohello --run neor1 --run neopanic --run neotest --run neor1c --run neocli --run neowb1 |
+            --cdrive /vol --run neohello --run neor1 --run neopanic --run neotest --run neor1c --run neocli --run neowb1 --run neotrap |
             tee out/virt.log
           cp "$K/out/ekern-qemu/serial.log" out/virt-serial.log
 
@@ -147,6 +149,7 @@ jobs:
           grep -q '^test-fshell-qemu: run neotest -> 0$' $v
           grep -q '^test-fshell-qemu: run neocli -> 0$' $v
           grep -q '^test-fshell-qemu: run neowb1 -> 0$' $v
+          grep -q '^test-fshell-qemu: run neotrap -> 0$' $v
           grep -a 'neo: rust_hello(6, 7) = 42' $s
           grep -a 'r1: 6 \* 7 = 42' $s
           grep -a 'rust panic: deliberate panic 7' $s
@@ -155,6 +158,7 @@ jobs:
           grep -a 'neocli: 9 passed, 0 failed' $s
           grep -a 'neocli: server exited Kill 0' $s
           grep -a 'neowb1: 6 passed, 0 failed' $s
+          grep -a 'neotrap: 4 passed, 0 failed' $s
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
       - uses: actions/upload-artifact@v4
