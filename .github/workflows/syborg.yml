@@ -65,7 +65,7 @@ jobs:
           cargo test -p e32-sys -p e32
           cargo arm
           mkdir -p ../build/rust
-          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv,libneowb1}.a ../build/rust/  # neowb1: linked only (its tests need the AArch64 kernel, not run here)
+          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv,libneowb1}.a ../build/rust/  # neowb1: its tests need the AArch64 kernel, so they run on virt only
           cp symbian/exes.txt symbian/neocli.cpp ../build/rust/
 
       - name: Fetch the Symbian sources
@@ -143,9 +143,11 @@ jobs:
           v=out/virt.log s=out/virt-serial.log
           grep -q '^test-fshell-qemu: PASS$' $v
           grep -q 'pushed C:\\Sys\\Bin\\NEOR1C.EXE' $v
+          grep -q '^test-fshell-qemu: run neohello -> 0$' $v
           grep -q '^test-fshell-qemu: run neor1 -> 42$' $v
           grep -q '^test-fshell-qemu: run neor1c -> 42$' $v
           grep -q '^test-fshell-qemu: run neotest -> 0$' $v
+          grep -q '^test-fshell-qemu: run neocli -> 0$' $v
           grep -q '^test-fshell-qemu: run neowb1 -> 0$' $v
           grep -a 'neo: rust_hello(6, 7) = 42' $s
           grep -a 'r1: 6 \* 7 = 42' $s
