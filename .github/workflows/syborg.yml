@@ -34,12 +34,10 @@ jobs:
 
       # also the QEMU virt test driver (baseport/arm64/tools/test-fshell-qemu.py), from the same kernel main
       - name: Kernel exec table (execs.txt)
-        env:
-          KERNEL_TOOLS_REF: us6a-virt-tests   # until NeoSymbian/kernel#33 is merged
         run: |
           git init -q kernelhwsrv
           git -C kernelhwsrv remote add origin https://github.com/NeoSymbian/kernel.git
-          git -C kernelhwsrv fetch -q --depth 1 --filter=blob:none origin ${KERNEL_TOOLS_REF:-main}
+          git -C kernelhwsrv fetch -q --depth 1 --filter=blob:none origin main
           git -C kernelhwsrv sparse-checkout set kernel/eka/kernel baseport/arm64/tools
           git -C kernelhwsrv checkout -q FETCH_HEAD
 
