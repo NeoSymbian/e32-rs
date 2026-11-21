@@ -32,12 +32,15 @@ jobs:
           repository: NeoSymbian/build
           path: build
 
+      # also the QEMU virt test driver (baseport/arm64/tools/test-fshell-qemu.py), from the same kernel main
       - name: Kernel exec table (execs.txt)
+        env:
+          KERNEL_TOOLS_REF: us6a-virt-tests   # until NeoSymbian/kernel#33 is merged
         run: |
           git init -q kernelhwsrv
           git -C kernelhwsrv remote add origin https://github.com/NeoSymbian/kernel.git
-          git -C kernelhwsrv fetch -q --depth 1 --filter=blob:none origin main
-          git -C kernelhwsrv sparse-checkout set kernel/eka/kernel
+          git -C kernelhwsrv fetch -q --depth 1 --filter=blob:none origin ${KERNEL_TOOLS_REF:-main}
+          git -C kernelhwsrv sparse-checkout set kernel/eka/kernel baseport/arm64/tools
           git -C kernelhwsrv checkout -q FETCH_HEAD
 
       - name: Generated exec numbers are up to date
@@ -115,6 +118,45 @@ jobs:
           ! grep -aq "\[EKERN\] \(exit\|panic in\) 'NEOSRV\|\[EKERN\] \(exit\|panic in\) 'NEOCLI" $s
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
+      # the same user side on our AArch64 kernel, QEMU virt with 4 Cortex-A55 (docs user-side-smp.md US6a): the kernel
+      # the phone runs, SMP, ARMv8; this ROM has no SYSSTART, so its console is eshell, where the driver starts fshell
+      - name: The AArch64 kernel for QEMU virt, with this user side
+        working-directory: build
+        run: KERNEL=src/oss.FCL.sf.os.kernelhwsrv ./neo kernel qemu
+
+      - name: On virt, run neohello, neor1, neopanic, neotest, neor1c (pushed to C:), neocli, neowb1 through fshell
+        working-directory: build
+        shell: bash
+        run: |
+          set -o pipefail
+          . ./images.sh
+          K=$PWD/src/oss.FCL.sf.os.kernelhwsrv
+          docker run --rm --user "$(id -u):$(id -g)" -v "$K:/kernel" -v "$PWD/../kernelhwsrv/baseport/arm64/tools:/tools:ro" \
+            -v neosymbian-build:/vol:ro -e OUT=/kernel/out/ekern-qemu "$BUILD_IMAGE" python3 /tools/test-fshell-qemu.py 900 \
+            --cdrive /vol --run neohello --run neor1 --run neopanic --run neotest --run neor1c --run neocli --run neowb1 |
+            tee out/virt.log
+          cp "$K/out/ekern-qemu/serial.log" out/virt-serial.log
+
+      - name: Check the virt output
+        working-directory: build
+        run: |
+          v=out/virt.log s=out/virt-serial.log
+          grep -q '^test-fshell-qemu: PASS$' $v
+          grep -q 'pushed C:\\Sys\\Bin\\NEOR1C.EXE' $v
+          grep -q '^test-fshell-qemu: run neor1 -> 42$' $v
+          grep -q '^test-fshell-qemu: run neor1c -> 42$' $v
+          grep -q '^test-fshell-qemu: run neotest -> 0$' $v
+          grep -q '^test-fshell-qemu: run neowb1 -> 0$' $v
+          grep -a 'neo: rust_hello(6, 7) = 42' $s
+          grep -a 'r1: 6 \* 7 = 42' $s
+          grep -a 'rust panic: deliberate panic 7' $s
+          grep -a 'Thread NEOPANIC.EXE.* Panic RUST' $s
+          grep -a 'neotest: 12 passed, 0 failed' $s
+          grep -a 'neocli: 9 passed, 0 failed' $s
+          grep -a 'neocli: server exited Kill 0' $s
+          grep -a 'neowb1: 6 passed, 0 failed' $s
+          ! grep -aq 'K::Fault\|Kern::Fault' $s
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -124,3 +166,5 @@ jobs:
             build/out/serial.log
             build/out/log/
             build/out/qemu-monitor.log
+            build/out/virt.log
+            build/out/virt-serial.log
