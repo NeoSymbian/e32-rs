@@ -6,17 +6,15 @@ use crate::sys::{self, TOwnerType};
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
-use core::sync::atomic::{AtomicBool, Ordering};
 
 fn check(h: i32) -> Result<i32, i32> {
     if h < 0 { Err(h) } else { Ok(h) }
 }
 
-/// `RMutex` around a value. The kernel mutex is recursive; `held` refuses a second lock by the holding thread, which
+/// `RMutex` around a value. The kernel mutex is recursive; `lock` refuses a second lock by the holding thread, which
 /// would hand out two `&mut T`.
 pub struct Mutex<T> {
     handle: i32,
-    held: AtomicBool,
     data: UnsafeCell<T>,
 }
 
@@ -29,19 +27,17 @@ impl<T> Mutex<T> {
     pub fn new(value: T) -> Result<Self, i32> {
         Ok(Self {
             handle: check(sys::mutex_create(TOwnerType::Process))?,
-            held: AtomicBool::new(false),
             data: UnsafeCell::new(value),
         })
     }
 
     /// Panics if this thread already holds the lock.
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        sys::mutex_wait(self.handle, 0);
-        // Another thread can't hold the mutex now, so `held` set means this thread got it twice.
-        if self.held.swap(true, Ordering::Relaxed) {
-            sys::mutex_signal(self.handle);
+        // The kernel's own owner record: exact, and still right after a holder thread died.
+        if sys::mutex_is_held(self.handle) {
             panic!("e32::sync::Mutex locked twice by one thread");
         }
+        sys::mutex_wait(self.handle, 0);
         MutexGuard {
             m: self,
             _not_send: PhantomData,
@@ -78,7 +74,6 @@ impl<T> DerefMut for MutexGuard<'_, T> {
 
 impl<T> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
-        self.m.held.store(false, Ordering::Relaxed);
         sys::mutex_signal(self.m.handle);
     }
 }

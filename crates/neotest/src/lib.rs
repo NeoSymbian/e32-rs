@@ -219,9 +219,13 @@ fn atomics_across_cores() -> Outcome {
         handles.push(h);
     }
     let codes: i32 = handles.into_iter().map(|h| h.join()).sum();
+    // `join` can return early (a failed logon), so only `done` proves the workers are out of the lock.
     let done = shared.done.load(Ordering::Acquire);
+    if done != THREADS {
+        return Err(format!("codes {codes}, done {done}/{THREADS}"));
+    }
     let wide = shared.wide.load(Ordering::Relaxed);
-    // SAFETY: every worker has finished.
+    // SAFETY: every worker has finished (`done`, Acquire).
     let plain = unsafe { *shared.plain.get() };
     let total = THREADS * ITERS;
     let refs = Arc::strong_count(&shared);

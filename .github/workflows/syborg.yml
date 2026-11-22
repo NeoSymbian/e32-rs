@@ -121,8 +121,8 @@ jobs:
           grep -a 'rust panic: deliberate panic 7' $s
           grep -a 'Thread NEOPANIC.EXE.* Panic RUST' $s
           grep -a 'neotest: 13 passed, 0 failed' $s
-          grep -a 'test atomics ... ok' $s   # US4: native ARMv8 atomics and Arc across cores
-          grep -a 'test fp_threads ... ok' $s
+          grep -aF 'test atomics ... ok' $s   # US4: native ARMv8 atomics and Arc across cores
+          grep -aF 'test fp_threads ... ok' $s
           grep -a 'neocli: 9 passed, 0 failed' $s
           grep -a 'neocli: server exited Kill 0' $s
           grep -a 'neowb1: 6 passed, 0 failed' $s

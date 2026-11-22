@@ -49,11 +49,11 @@ static HEAP: ChunkHeap = ChunkHeap {
 
 /// Create the chunk, the heap and its lock. Called once by `e32::main!` on the main thread, before any thread exists.
 pub fn init() {
-    // SAFETY: single-threaded here (see above).
-    let st = unsafe { &mut *HEAP.state.get() };
-    if st.chunk > 0 {
+    if HEAP.lock.load(Ordering::Acquire) != 0 {
         return;
     }
+    // SAFETY: single-threaded here (see above), and the heap isn't initialised yet, so nothing else uses the state.
+    let st = unsafe { &mut *HEAP.state.get() };
     let info = TChunkCreate {
         i_att: 0, // ENormal, local
         i_initial_top: INITIAL as i32,
@@ -67,10 +67,11 @@ pub fn init() {
         crate::process::panic("RUST-HEAP", if chunk < 0 { chunk } else { lock });
     }
     st.chunk = chunk;
-    HEAP.lock.store(lock, Ordering::Release);
     st.committed = INITIAL;
     // SAFETY: the chunk's first INITIAL bytes are committed, owned by this process and used by nothing else.
     unsafe { st.heap.init(sys::chunk_base(chunk), INITIAL) };
+    // Publishes the state written above to every later `with_lock`.
+    HEAP.lock.store(lock, Ordering::Release);
 }
 
 impl ChunkHeap {

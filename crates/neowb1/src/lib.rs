@@ -14,6 +14,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::hint::black_box;
+use core::sync::atomic::{AtomicU32, Ordering};
 use e32::dprintln;
 use e32::sync::Semaphore;
 use e32::sys::{self, TChunkAdjust, TChunkCreate, TOwnerType};
@@ -160,6 +161,8 @@ fn fp_survives_preemption() -> Outcome {
     const THREADS: u32 = 8;
     const ROUNDS: u32 = 100;
     let spins = spins_for_20ms();
+    // `join` gives 0 for a panic too, so each worker that ran every round counts itself here.
+    let finished: &'static AtomicU32 = Box::leak(Box::new(AtomicU32::new(0)));
     let mut handles = Vec::new();
     for t in 0..THREADS {
         let h = thread::spawn(move || {
@@ -196,14 +199,20 @@ fn fp_survives_preemption() -> Outcome {
                 }
             }
             sys::handle_close(sem);
-            if bad_rounds == 0 { 0 } else { 1 }
+            if bad_rounds == 0 {
+                finished.fetch_add(1, Ordering::Release);
+                0
+            } else {
+                1
+            }
         })
         .map_err(|e| format!("spawn {e}"))?;
         handles.push(h);
     }
     let bad: i32 = handles.into_iter().map(|h| h.join()).sum();
-    ensure(bad == 0, || {
-        format!("{bad} of {THREADS} threads saw another's registers")
+    let finished = finished.load(Ordering::Acquire);
+    ensure(bad == 0 && finished == THREADS, || {
+        format!("{bad} of {THREADS} threads saw another's registers, {finished} finished")
     })
 }
 

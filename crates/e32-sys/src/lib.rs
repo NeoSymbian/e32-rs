@@ -494,6 +494,12 @@ pub fn mutex_signal(handle: TInt) {
     unsafe { exec4::<{ slow::MUTEX_SIGNAL }>(handle as u32, 0, 0, 0) };
 }
 
+/// `Exec::MutexIsHeld(DMutex*)`: whether the current thread holds the mutex.
+pub fn mutex_is_held(handle: TInt) -> bool {
+    // SAFETY: plain integer.
+    unsafe { exec4::<{ slow::MUTEX_IS_HELD }>(handle as u32, 0, 0, 0) != 0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
