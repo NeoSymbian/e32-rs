@@ -1,11 +1,13 @@
-# The Symbian user side is built -march=armv5te, ARM/Thumb, soft-float ABI (NeoSymbian/build toolchain/symcc).
-# Never use an eabihf target: it passes floats in VFP registers and breaks calls into Symbian libraries.
+# The Symbian user side is ARMv8-A AArch32, ARM state, VFP/NEON inside functions, soft-float calling convention
+# (softfp; docs user-side-smp.md US4, as the C++ side's NeoSymbian/build toolchain/symcc). Never use an eabihf target: it
+# passes floats in VFP registers and breaks calls into Symbian libraries.
 #
-#   cargo arm    the Symbian staticlibs: target/armv5te-none-eabi/release/lib*.a (core built from source: tier 3)
-#   cargo arm7   the same for ARMv7-A/ARMv8-AArch32 with VFPv3 + NEON, still the soft-float calling convention (softfp):
-#                targets/armv7a-neosymbian-eabi.json (browser/wb2-std.md WB2a; the kernel switches FP/NEON per thread since WB1).
-#                +no-movt: E32 images relocate whole words only, so no MOVW/MOVT address pairs (reloc 43/44).
+#   cargo arm    the Symbian staticlibs: target/armv8a-neosymbian-eabi/release/lib*.a (core built from source).
+#                targets/armv8a-neosymbian-eabi.json (no_std); its twin armv8a-symbian-eabi.json (std, os=symbian) is the
+#                browser's. +no-movt: E32 images relocate whole words only, so no MOVW/MOVT address pairs (reloc 43/44).
+#                compiler-builtins-mem: compiler_builtins only provides mem* itself for "-none" target names.
+#   cargo clippy-arm   clippy with the same target
 #   cargo test   host unit tests of the pure parts (e32-sys, e32)
 [alias]
-arm = "build --release --target armv5te-none-eabi -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem"
-arm7 = "build --release --target targets/armv7a-neosymbian-eabi.json -Zjson-target-spec -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem"
+arm = "build --release --target targets/armv8a-neosymbian-eabi.json -Zjson-target-spec -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem"
+clippy-arm = "clippy --release --target targets/armv8a-neosymbian-eabi.json -Zjson-target-spec -Zbuild-std=core,alloc,compiler_builtins -Zbuild-std-features=compiler-builtins-mem"

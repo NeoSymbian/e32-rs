@@ -8,6 +8,7 @@ use crate::sys::{self, TChunkAdjust, TChunkCreate, TOwnerType};
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicI32, Ordering};
 use linked_list_allocator::Heap;
 
 /// Address space reserved for the heap (committed lazily, so a bigger reserve costs no RAM). 64 MB: the UI server holds
@@ -22,28 +23,34 @@ struct State {
     heap: Heap,
     chunk: i32,
     committed: usize,
-    // shortcut: one kernel mutex round trip per alloc/free (ARMv5TE has no CAS for a user-side fast lock); use an
-    // LDREX/STREX lock once there is an ARMv7 build.
-    lock: i32,
 }
 
-struct ChunkHeap(UnsafeCell<State>);
+/// The state, and the kernel mutex guarding it. The handle lives outside the state so a thread can take the mutex
+/// before it forms `&mut State`.
+// shortcut: one kernel mutex round trip per alloc/free; ARMv8 has CAS now, so a user-side fast lock is the upgrade if
+// the round trip shows in a profile.
+struct ChunkHeap {
+    state: UnsafeCell<State>,
+    lock: AtomicI32,
+}
 
 // SAFETY: every access to the state goes through the kernel mutex (`with_lock`), after `init` on the main thread.
 unsafe impl Sync for ChunkHeap {}
 
 #[global_allocator]
-static HEAP: ChunkHeap = ChunkHeap(UnsafeCell::new(State {
-    heap: Heap::empty(),
-    chunk: 0,
-    committed: 0,
-    lock: 0,
-}));
+static HEAP: ChunkHeap = ChunkHeap {
+    state: UnsafeCell::new(State {
+        heap: Heap::empty(),
+        chunk: 0,
+        committed: 0,
+    }),
+    lock: AtomicI32::new(0),
+};
 
 /// Create the chunk, the heap and its lock. Called once by `e32::main!` on the main thread, before any thread exists.
 pub fn init() {
     // SAFETY: single-threaded here (see above).
-    let st = unsafe { &mut *HEAP.0.get() };
+    let st = unsafe { &mut *HEAP.state.get() };
     if st.chunk > 0 {
         return;
     }
@@ -60,7 +67,7 @@ pub fn init() {
         crate::process::panic("RUST-HEAP", if chunk < 0 { chunk } else { lock });
     }
     st.chunk = chunk;
-    st.lock = lock;
+    HEAP.lock.store(lock, Ordering::Release);
     st.committed = INITIAL;
     // SAFETY: the chunk's first INITIAL bytes are committed, owned by this process and used by nothing else.
     unsafe { st.heap.init(sys::chunk_base(chunk), INITIAL) };
@@ -68,11 +75,11 @@ pub fn init() {
 
 impl ChunkHeap {
     fn with_lock<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
-        // SAFETY: `init` ran before any allocation; the mutex serialises the threads.
-        let st = unsafe { &mut *self.0.get() };
-        sys::mutex_wait(st.lock, 0);
-        let r = f(st);
-        sys::mutex_signal(st.lock);
+        let lock = self.lock.load(Ordering::Acquire);
+        sys::mutex_wait(lock, 0);
+        // SAFETY: `init` ran before any allocation, and this thread holds the mutex that serialises the threads.
+        let r = f(unsafe { &mut *self.state.get() });
+        sys::mutex_signal(lock);
         r
     }
 }

@@ -69,16 +69,9 @@ pub enum TOwnerType {
     Thread = 1,
 }
 
-/// An acquire barrier between cores. ARMv5TE has no DMB and Rust gives it no atomics, but every CPU NeoSymbian runs
-/// on is ARMv7 or later, so the instruction goes in as a raw word there.
+/// An acquire barrier between cores (DMB on ARMv8).
 #[inline(always)]
 pub fn acquire_barrier() {
-    #[cfg(all(target_arch = "arm", not(target_feature = "v7")))]
-    // SAFETY: DMB ISH (0xf57ff05b, ARM state) only orders memory; no `nomem`, so it is a compiler barrier too.
-    unsafe {
-        core::arch::asm!(".inst 0xf57ff05b", options(nostack, preserves_flags))
-    };
-    #[cfg(not(all(target_arch = "arm", not(target_feature = "v7"))))]
     core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
 }
 

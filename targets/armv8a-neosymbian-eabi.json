@@ -1,21 +1,25 @@
 {
   "abi": "eabi",
   "arch": "arm",
-  "asm-args": ["-mthumb-interwork", "-march=armv7-a", "-mfpu=neon", "-mlittle-endian"],
-  "c-enum-min-bits": 8,
+  "asm-args": [
+    "-march=armv8-a+crc+crypto",
+    "-mfpu=crypto-neon-fp-armv8",
+    "-mlittle-endian"
+  ],
+  "c-enum-min-bits": 32,
   "crt-objects-fallback": "false",
   "data-layout": "e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64",
   "emit-debug-gdb-scripts": false,
-  "features": "+v7,+thumb2,+vfp3,+d32,+neon,-soft-float,+strict-align,+no-movt",
+  "features": "+v8,+thumb2,+neon,+fp-armv8,+d32,+crc,+aes,+sha2,-soft-float,+strict-align,+no-movt",
   "frame-pointer": "always",
   "has-thumb-interworking": true,
   "linker": "rust-lld",
   "linker-flavor": "gnu-lld",
   "llvm-floatabi": "soft",
-  "llvm-target": "armv7a-none-eabi",
+  "llvm-target": "armv8a-none-eabi",
   "max-atomic-width": 64,
   "metadata": {
-    "description": "NeoSymbian user side: ARMv7-A/ARMv8-AArch32 with VFPv3 and NEON, soft-float calling convention (softfp)",
+    "description": "NeoSymbian user side, no_std: ARMv8-A AArch32 (ARM state) with VFP/NEON/CRC/AES/SHA, soft-float calling convention (softfp); +no-movt: E32 relocates whole words only",
     "host_tools": false,
     "std": false,
     "tier": 3
