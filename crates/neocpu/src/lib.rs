@@ -44,8 +44,9 @@ mod device {
                     }
                 }
             }
-            thread::unlock_cpu();
+            // still pinned: the console's CPU prefix (`N:` on virt) shows where the tests ran
             dprintln!("cpu {}:{}", cpu, line);
+            thread::unlock_cpu();
         }
         dprintln!(
             "neocpu: {} cpus, {} passed, {} failed",

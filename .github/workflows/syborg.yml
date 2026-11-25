@@ -131,6 +131,8 @@ jobs:
           # US6a: the AArch32 CRC32/AES/SHA instructions give the known answers on each of the 4 CPUs
           grep -q '^test-fshell-qemu: run neocpu -> 0$' $v
           grep -a 'neocpu: 4 cpus, 16 passed, 0 failed' $s
+          # each CPU's line comes from that CPU (the console prefixes every line with the CPU that wrote it): the pin held
+          [ "$(grep -acE '^([0-9]):cpu \1: crc32 ok aes ok sha1 ok sha256 ok' $s)" = 4 ]
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
       - uses: actions/upload-artifact@v4
