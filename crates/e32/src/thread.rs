@@ -106,6 +106,14 @@ pub fn lock_to_cpu(cpu: u32) -> Result<(), i32> {
     sys::ui::lock_thread_to_cpu(cpu)
 }
 
+/// Run every CPU (and the L3 cache) at its top clock for `ms` milliseconds (1..=5000), as a touch does for 3 s. Work
+/// that must keep pace without touches (a video playing) asks again before the time runs out. The Pixel's fast cores
+/// otherwise sit at 300 MHz (smooth-ui S3b). Needs PowerMgmt; `Err(KErrNotSupported)` on boards without cpufreq.
+pub fn boost_cpus(ms: u32) -> Result<(), i32> {
+    let r = sys::ui::neo_cpu_boost(ms);
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
 /// Let the calling thread run on any CPU again.
 pub fn unlock_cpu() {
     // KCpuAffinityAny is always accepted

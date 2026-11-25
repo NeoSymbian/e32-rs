@@ -26,6 +26,9 @@ pub const EHAL_GROUP_VARIANT: TInt = 1;
 pub const ENEO_HAL_POWER: TInt = 0x4e0b;
 /// `ENeoHalRtcRead`: the PMIC RTC's raw seconds, written as a `TUint32`; KErrNotSupported without one.
 pub const ENEO_HAL_RTC_READ: TInt = 0x4e0c;
+/// NeoSymbian `ENeoHalCpuBoost`: a1 = milliseconds (1..=5000) of top CPU and L3 clocks, as a touch gives for 3 s
+/// (PowerMgmt; `KErrNotSupported` on boards without cpufreq).
+pub const ENEO_HAL_CPU_BOOST: TInt = 0x4e29;
 /// `EHalGroupDisplay` (`u32hal.h`).
 pub const EHAL_GROUP_DISPLAY: TInt = 4;
 /// `EDisplayHalCurrentModeInfo`: fills a `TVideoInfoV01` for the current mode.
@@ -154,6 +157,20 @@ pub fn neo_power(action: TInt) -> TInt {
             EHAL_GROUP_VARIANT,
             ENEO_HAL_POWER,
             action as usize as *mut u8,
+            core::ptr::null_mut(),
+        )
+    }
+}
+
+/// NeoSymbian: top CPU and L3 clocks for `ms` milliseconds (1..=5000) from now, then the board's idle steps again
+/// unless asked again or the user touches the phone (FA12: a video keeps asking while it plays).
+pub fn neo_cpu_boost(ms: u32) -> TInt {
+    // SAFETY: the kernel takes the milliseconds as a plain value in a1.
+    unsafe {
+        hal_function(
+            EHAL_GROUP_VARIANT,
+            ENEO_HAL_CPU_BOOST,
+            ms as usize as *mut u8,
             core::ptr::null_mut(),
         )
     }
