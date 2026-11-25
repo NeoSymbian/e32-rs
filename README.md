@@ -2,12 +2,10 @@
 
 Rust for the Symbian EKA2 user side, part of [NeoSymbian](https://github.com/NeoSymbian).
 
-The crates here build `no_std` Rust for the 2010 Symbian user-side ABI: 32-bit ARMv5TE with soft-float. The same
-binaries run on two platforms:
-- **now**, the 2010 ARM user side on QEMU Syborg, through
-  [NeoSymbian/build](https://github.com/NeoSymbian/build);
-- **later**, the Google Pixel 3a XL, once the [AArch64 kernel port](https://github.com/NeoSymbian/kernel)
-  boots the user side.
+The crates here build `no_std` Rust for the NeoSymbian user-side ABI: 32-bit ARMv8-A AArch32, ARM state, VFP/NEON
+inside functions, soft-float calling convention (`targets/armv8a-neosymbian-eabi.json`; docs `user-side-smp.md` US4).
+They run on the Google Pixel 3a XL and on QEMU `virt`, both under the
+[AArch64 kernel](https://github.com/NeoSymbian/kernel), through [NeoSymbian/build](https://github.com/NeoSymbian/build).
 
 The full plan is in [rust-integration.md](https://github.com/NeoSymbian/docs/blob/main/rust-integration.md).
 
@@ -69,21 +67,24 @@ The EXEs are listed in `symbian/exes.txt` (name, uid3, staticlib or `-`, optiona
 
 ## Building
 
-`rust-toolchain.toml` pins a nightly with `rust-src`. `armv5te-none-eabi` is a tier 3 target, so `core` is built from
-source.
+`rust-toolchain.toml` pins a nightly with `rust-src`. The targets in `targets/` are custom (no_std
+`armv8a-neosymbian-eabi`, and its std twin `armv8a-symbian-eabi` for the browser), so `core` is built from source.
+Other repos keep byte-identical copies of the JSON.
 
 ```sh
-cargo arm      # Symbian staticlibs -> target/armv5te-none-eabi/release/lib*.a
+cargo arm      # Symbian staticlibs -> target/armv8a-neosymbian-eabi/release/lib*.a
+cargo clippy-arm --workspace -- -D warnings
 cargo test -p e32-sys -p e32      # host unit tests
 python3 tools/gen_execs.py ../oss.FCL.sf.os.kernelhwsrv/kernel/eka/kernel/execs.txt   # regenerate execs.rs
 ```
 
-To run them on Syborg (needs Docker; the CI in `.github/workflows/syborg.yml` does exactly this):
+To run them on QEMU `virt` (needs Docker; the CI in `.github/workflows/syborg.yml`, name kept, does exactly this):
 
 ```sh
 git clone https://github.com/NeoSymbian/build && cd build
-mkdir -p rust && cp ../e32-rs/target/armv5te-none-eabi/release/lib*.a ../e32-rs/symbian/{exes.txt,neocli.cpp} rust/
-./fetch.sh && ./build.sh && RUN=neohello,neor1,neopanic,neotest,neor1c,neocli SECS=220 ./boot.sh   # -> out/serial.log, out/fb.png
+mkdir -p rust && cp ../e32-rs/target/armv8a-neosymbian-eabi/release/lib*.a ../e32-rs/symbian/{exes.txt,neocli.cpp,neotrap.cpp} rust/
+./neo fetch && ./neo rom && ./neo kernel qemu
+python3 ../kernel/baseport/arm64/tools/test-fshell-qemu.py 900 --cdrive "$BUILD_VOLUME" --run neohello --run neotest --run neowb1
 ```
 
 **ABI rule:** never use an `eabihf` target. The Symbian user side passes floating-point values in integer registers;

@@ -4,13 +4,15 @@
 
 use crate::sys::{self, TOwnerType};
 use core::cell::UnsafeCell;
+use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
 fn check(h: i32) -> Result<i32, i32> {
     if h < 0 { Err(h) } else { Ok(h) }
 }
 
-/// `RMutex` around a value.
+/// `RMutex` around a value. The kernel mutex is recursive; `lock` refuses a second lock by the holding thread, which
+/// would hand out two `&mut T`.
 pub struct Mutex<T> {
     handle: i32,
     data: UnsafeCell<T>,
@@ -29,9 +31,17 @@ impl<T> Mutex<T> {
         })
     }
 
+    /// Panics if this thread already holds the lock.
     pub fn lock(&self) -> MutexGuard<'_, T> {
+        // The kernel's own owner record: exact, and still right after a holder thread died.
+        if sys::mutex_is_held(self.handle) {
+            panic!("e32::sync::Mutex locked twice by one thread");
+        }
         sys::mutex_wait(self.handle, 0);
-        MutexGuard { m: self }
+        MutexGuard {
+            m: self,
+            _not_send: PhantomData,
+        }
     }
 }
 
@@ -41,8 +51,10 @@ impl<T> Drop for Mutex<T> {
     }
 }
 
+/// Not `Send`: the kernel mutex must be signalled by the thread that waited on it.
 pub struct MutexGuard<'a, T> {
     m: &'a Mutex<T>,
+    _not_send: PhantomData<*const ()>,
 }
 
 impl<T> Deref for MutexGuard<'_, T> {

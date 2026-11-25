@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-//! A `critical-section` implementation (feature `critical-section`) for crates that need one on ARMv5TE, which has
-//! no compare-and-swap (Slint's `portable-atomic`, `once_cell`, ...). It is a process-wide kernel mutex — recursive
+//! A `critical-section` implementation (feature `critical-section`) for crates that ask for one (Slint's
+//! `portable-atomic`, `once_cell`, ...; since US4 the atomics themselves are native ARMv8, but `once_cell::sync` still
+//! enters it). It is a process-wide kernel mutex — recursive
 //! for its holder, so nested critical sections work — created by [`crate::init`].
 
 use crate::sys::{self, TOwnerType};

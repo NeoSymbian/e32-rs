@@ -8,7 +8,10 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use e32::dprintln;
 use e32::fs::{File, Fs, SharedFile};
 use e32::ipc::{Session, TIpcArgs, TVersion};
@@ -41,6 +44,7 @@ const TESTS: &[Test] = &[
     ("fs_watch", drive_info_entries_and_notify),
     ("ipc_server", ipc_server),
     ("fs_share", file_share),
+    ("atomics", atomics_across_cores),
 ];
 
 fn main() -> i32 {
@@ -165,6 +169,78 @@ fn threads_share_a_mutex() -> Outcome {
     ensure(total == 1000 && codes == 10 + 11 + 12 + 13, || {
         format!("counter {total}, exit codes sum {codes}")
     })
+}
+
+/// Native ARMv8 atomics across cores (US4): 8 threads (more than the 4 CPUs) each, per iteration, clone and drop an
+/// `Arc`, `fetch_add` a 64-bit counter that starts below 2^32 (so the carry into the high word is exercised), and take
+/// a `compare_exchange` spin lock around a plain counter. Each worker counts itself done at the end, since `join`'s
+/// exit reason is 0 for a panic too.
+fn atomics_across_cores() -> Outcome {
+    struct Shared {
+        wide: AtomicU64,
+        lock: AtomicU32,
+        plain: UnsafeCell<u32>,
+        done: AtomicU32,
+    }
+    // SAFETY: `plain` is only touched under the `lock` spin lock.
+    unsafe impl Sync for Shared {}
+    const THREADS: u32 = 8;
+    const ITERS: u32 = 20_000;
+    const START: u64 = 0xFFFF_0000;
+    let shared = Arc::new(Shared {
+        wide: AtomicU64::new(START),
+        lock: AtomicU32::new(0),
+        plain: UnsafeCell::new(0),
+        done: AtomicU32::new(0),
+    });
+    let mut handles = Vec::new();
+    for _ in 0..THREADS {
+        let sh = Arc::clone(&shared);
+        let h = thread::spawn(move || {
+            for _ in 0..ITERS {
+                let extra = Arc::clone(&sh);
+                extra.wide.fetch_add(1, Ordering::Relaxed);
+                drop(extra);
+                while sh
+                    .lock
+                    .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+                {
+                    core::hint::spin_loop();
+                }
+                // SAFETY: the spin lock is held.
+                unsafe { *sh.plain.get() += 1 };
+                sh.lock.store(0, Ordering::Release);
+            }
+            sh.done.fetch_add(1, Ordering::Release);
+            0
+        })
+        .map_err(|e| format!("spawn {e}"))?;
+        handles.push(h);
+    }
+    let codes: i32 = handles.into_iter().map(|h| h.join()).sum();
+    // `join` can return early (a failed logon), so only `done` proves the workers are out of the lock.
+    let done = shared.done.load(Ordering::Acquire);
+    if done != THREADS {
+        return Err(format!("codes {codes}, done {done}/{THREADS}"));
+    }
+    let wide = shared.wide.load(Ordering::Relaxed);
+    // SAFETY: every worker has finished (`done`, Acquire).
+    let plain = unsafe { *shared.plain.get() };
+    let total = THREADS * ITERS;
+    let refs = Arc::strong_count(&shared);
+    ensure(
+        codes == 0
+            && done == THREADS
+            && wide == START + total as u64
+            && plain == total
+            && refs == 1,
+        || {
+            format!(
+                "codes {codes}, done {done}/{THREADS}, wide {wide:#x}, plain {plain}/{total}, refs {refs}"
+            )
+        },
+    )
 }
 
 /// Two threads hand control back and forth ten times through two semaphores.

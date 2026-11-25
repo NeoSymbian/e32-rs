@@ -60,10 +60,11 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy -p e32-sys -p e32 -p neoecho -- -D warnings
+          cargo clippy-arm --workspace -- -D warnings
           cargo test -p e32-sys -p e32
           cargo arm
           mkdir -p ../build/rust
-          cp target/armv5te-none-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv,libneowb1}.a ../build/rust/  # neowb1: its tests need the AArch64 kernel, so they run on virt only
+          cp target/armv8a-neosymbian-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv,libneowb1}.a ../build/rust/  # neowb1: its tests need the AArch64 kernel, so they run on virt only
           cp symbian/exes.txt symbian/neocli.cpp symbian/neotrap.cpp ../build/rust/
 
       - name: Fetch the Symbian sources
@@ -119,7 +120,9 @@ jobs:
           grep -a 'r1: 6 \* 7 = 42' $s
           grep -a 'rust panic: deliberate panic 7' $s
           grep -a 'Thread NEOPANIC.EXE.* Panic RUST' $s
-          grep -a 'neotest: 12 passed, 0 failed' $s
+          grep -a 'neotest: 13 passed, 0 failed' $s
+          grep -aF 'test atomics ... ok' $s   # US4: native ARMv8 atomics and Arc across cores
+          grep -aF 'test fp_threads ... ok' $s
           grep -a 'neocli: 9 passed, 0 failed' $s
           grep -a 'neocli: server exited Kill 0' $s
           grep -a 'neowb1: 6 passed, 0 failed' $s

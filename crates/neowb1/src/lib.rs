@@ -2,8 +2,8 @@
 //! WB1 on-target tests (`NEOWB1.EXE`, docs `browser/wb1-kernel.md`): what Servo needs from the kernel. Reports like neotest,
 //! `test <name> ... ok|FAILED: <why>` and `neowb1: N passed, M failed`. Exit code = failures.
 //!
-//! The FP tests use VFPv3/NEON (`.fpu neon` in the asm only): the crate stays soft-float ARMv5TE, so no compiled code
-//! touches the VFP registers between the asm blocks.
+//! The FP tests use VFP/NEON from asm. The crate itself is ARMv8 with NEON (US4), so compiled code may use the FP
+//! registers too: each test keeps its fill, wait and check of the registers inside one asm block.
 #![no_std]
 
 extern crate alloc;
@@ -14,6 +14,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::hint::black_box;
+use core::sync::atomic::{AtomicU32, Ordering};
 use e32::dprintln;
 use e32::sync::Semaphore;
 use e32::sys::{self, TChunkAdjust, TChunkCreate, TOwnerType};
@@ -23,12 +24,13 @@ use e32::time::ticks;
 e32::main!(main);
 
 type Outcome = Result<(), String>;
+type Test = (&'static str, fn() -> Outcome);
 
 fn ensure(ok: bool, why: impl FnOnce() -> String) -> Outcome {
     if ok { Ok(()) } else { Err(why()) }
 }
 
-const TESTS: &[(&str, fn() -> Outcome)] = &[
+const TESTS: &[Test] = &[
     ("fp_math", fp_math),
     ("fp_threads", fp_survives_preemption),
     ("stack_8m", stack_8m),
@@ -75,6 +77,7 @@ fn fp_math() -> Outcome {
             alo = in(reg) a as u32, ahi = in(reg) (a >> 32) as u32,
             blo = in(reg) b as u32, bhi = in(reg) (b >> 32) as u32,
             slo = out(reg) sum_lo, shi = out(reg) sum_hi, mlo = out(reg) mul_lo, mhi = out(reg) mul_hi,
+            out("d0") _, out("d1") _, out("d2") _, out("d3") _,
             options(nostack),
         );
     }
@@ -85,89 +88,131 @@ fn fp_math() -> Outcome {
     })
 }
 
-/// Fill Q0-Q15 (= D0-D31) with `seed`, `seed + 1`, ... per Q register, and FPSCR with `fpscr`.
-fn fp_fill(seed: u32, fpscr: u32) {
-    // SAFETY: writes VFP/NEON registers only (nothing compiled here uses them: soft-float).
+/// One round, all in one asm block so no compiled code runs between filling and checking the registers: save the
+/// caller's FPSCR and d8-d15, fill Q0-Q15 (= D0-D31) with `seed`, `seed + 1`, ... per Q register and FPSCR with
+/// `fpscr`, spin `spins` integer loops (the 1 ms tick preempts and migrates the thread), then, if `sem` >= 0, block in
+/// `SemaphoreWait(sem, 1000 us)` (a real context switch; nobody signals it, so it times out), store D0-D31 to `out`,
+/// read FPSCR, restore. Returns (FPSCR seen, the wait's result).
+fn fp_round(seed: u32, fpscr: u32, spins: u32, sem: i32, out: &mut [u32; 64]) -> (u32, i32) {
+    let (got, waited): (u32, i32);
+    // SAFETY: VFP/NEON registers, FPSCR and `out` (256 bytes) only; d8-d15 and FPSCR are restored; the exec call's
+    // caller-saved registers are declared by clobber_abi; operands live in r4/r5/r8/r10 (callee-saved) across it.
     unsafe {
         asm!(
-            ".fpu neon",
+            ".fpu crypto-neon-fp-armv8",
+            "vmrs r5, fpscr",
+            "vpush {{d8-d15}}",
             "vmsr fpscr, {f}",
-            "vdup.32 q0, {s}", "add {s}, {s}, #1", "vdup.32 q1, {s}", "add {s}, {s}, #1",
-            "vdup.32 q2, {s}", "add {s}, {s}, #1", "vdup.32 q3, {s}", "add {s}, {s}, #1",
-            "vdup.32 q4, {s}", "add {s}, {s}, #1", "vdup.32 q5, {s}", "add {s}, {s}, #1",
-            "vdup.32 q6, {s}", "add {s}, {s}, #1", "vdup.32 q7, {s}", "add {s}, {s}, #1",
-            "vdup.32 q8, {s}", "add {s}, {s}, #1", "vdup.32 q9, {s}", "add {s}, {s}, #1",
-            "vdup.32 q10, {s}", "add {s}, {s}, #1", "vdup.32 q11, {s}", "add {s}, {s}, #1",
-            "vdup.32 q12, {s}", "add {s}, {s}, #1", "vdup.32 q13, {s}", "add {s}, {s}, #1",
-            "vdup.32 q14, {s}", "add {s}, {s}, #1", "vdup.32 q15, {s}",
-            s = inout(reg) seed => _, f = in(reg) fpscr,
-            options(nostack),
+            "vdup.32 q0, r2", "add r2, r2, #1", "vdup.32 q1, r2", "add r2, r2, #1",
+            "vdup.32 q2, r2", "add r2, r2, #1", "vdup.32 q3, r2", "add r2, r2, #1",
+            "vdup.32 q4, r2", "add r2, r2, #1", "vdup.32 q5, r2", "add r2, r2, #1",
+            "vdup.32 q6, r2", "add r2, r2, #1", "vdup.32 q7, r2", "add r2, r2, #1",
+            "vdup.32 q8, r2", "add r2, r2, #1", "vdup.32 q9, r2", "add r2, r2, #1",
+            "vdup.32 q10, r2", "add r2, r2, #1", "vdup.32 q11, r2", "add r2, r2, #1",
+            "vdup.32 q12, r2", "add r2, r2, #1", "vdup.32 q13, r2", "add r2, r2, #1",
+            "vdup.32 q14, r2", "add r2, r2, #1", "vdup.32 q15, r2",
+            "2:",
+            "subs r10, r10, #1",
+            "bne 2b",
+            "mov r0, #0",
+            "cmp r8, #0",
+            "blt 3f",
+            "mov r0, r8",
+            "movw r1, #1000",
+            "swi #{wait}",
+            "3:",
+            "vstmia r4!, {{d0-d15}}",
+            "vstmia r4, {{d16-d31}}",
+            "vmrs r1, fpscr",
+            "vpop {{d8-d15}}",
+            "vmsr fpscr, r5",
+            wait = const 0x1f, // slow::SEMAPHORE_WAIT (e32-sys execs.rs)
+            out("r5") _,
+            inout("r2") seed => _,
+            f = in(reg) fpscr,
+            inout("r10") spins.max(1) => _,
+            inout("r8") sem => _,
+            inout("r4") out.as_mut_ptr() => _,
+            lateout("r0") waited,
+            lateout("r1") got,
+            clobber_abi("C"),
         );
     }
-}
-
-/// D0-D31 as 64 words, and FPSCR.
-fn fp_dump(out: &mut [u32; 64]) -> u32 {
-    let fpscr: u32;
-    // SAFETY: stores 256 bytes into `out`, which is 256 bytes.
-    unsafe {
-        asm!(
-            ".fpu neon",
-            "vstmia {p}!, {{d0-d15}}",
-            "vstmia {p}, {{d16-d31}}",
-            "vmrs {f}, fpscr",
-            p = inout(reg) out.as_mut_ptr() => _, f = out(reg) fpscr,
-            options(nostack),
-        );
-    }
-    fpscr
+    (got, waited)
 }
 
 /// FPSCR bits a thread owns here: NZCV (31:28), DN (25), FZ (24), RMode (23:22).
 const FPSCR_MASK: u32 = 0xF3C0_0000;
 
-/// "FP patterns survive preemption and migration": 8 threads (more than the 4 CPUs) each fill every VFP register
-/// and FPSCR with their own pattern, busy-spin 20 ms (so the scheduler preempts and moves them), then check.
+/// Integer loops in about 20 ms (measured once with the kernel tick).
+fn spins_for_20ms() -> u32 {
+    let mut out = [0u32; 64];
+    let n = 4_000_000;
+    let t0 = ticks();
+    fp_round(0, 0, n, -1, &mut out);
+    let ms = ticks().wrapping_sub(t0).max(1);
+    (n as u64 * 20 / ms as u64).clamp(1_000_000, 200_000_000) as u32
+}
+
+/// "FP patterns survive preemption, migration and blocking": 8 threads (more than the 4 CPUs) each fill every VFP
+/// register and FPSCR with their own pattern, busy-spin ~20 ms (so the scheduler preempts and moves them), every 4th
+/// round also block 1 ms in a semaphore wait, then check, all inside one asm block (`fp_round`).
 fn fp_survives_preemption() -> Outcome {
     const THREADS: u32 = 8;
     const ROUNDS: u32 = 100;
+    let spins = spins_for_20ms();
+    // `join` gives 0 for a panic too, so each worker that ran every round counts itself here.
+    let finished: &'static AtomicU32 = Box::leak(Box::new(AtomicU32::new(0)));
     let mut handles = Vec::new();
     for t in 0..THREADS {
         let h = thread::spawn(move || {
+            let sem = sys::semaphore_create(0, TOwnerType::Thread);
+            if sem < 0 {
+                dprintln!("fp_threads: thread {} semaphore {}", t, sem);
+                return 1;
+            }
+            let mut bad_rounds = 0;
             for round in 0..ROUNDS {
                 let seed = (t << 24) | (round << 8);
                 let fpscr = ((t * 7 + round) << 22) & FPSCR_MASK;
-                fp_fill(seed, fpscr);
-                let t0 = ticks();
-                while ticks().wrapping_sub(t0) < 20 {
-                    black_box(());
-                }
+                let block = if round % 4 == 3 { sem } else { -1 };
                 let mut regs = [0u32; 64];
-                let got = fp_dump(&mut regs) & FPSCR_MASK;
+                let (got, waited) = fp_round(seed, fpscr, spins, block, &mut regs);
+                let got = got & FPSCR_MASK;
                 let bad = regs
                     .iter()
                     .enumerate()
                     .position(|(i, &w)| w != seed + (i as u32 / 4));
-                if got != fpscr || bad.is_some() {
+                let wait_ok = block < 0 || waited == sys::err::KERR_TIMED_OUT;
+                if got != fpscr || bad.is_some() || !wait_ok {
                     dprintln!(
-                        "fp_threads: thread {} round {}: word {:?}, fpscr {:#x} want {:#x}",
+                        "fp_threads: thread {} round {}: word {:?}, fpscr {:#x} want {:#x}, wait {}",
                         t,
                         round,
                         bad,
                         got,
-                        fpscr
+                        fpscr,
+                        waited
                     );
-                    return 1;
+                    bad_rounds += 1;
+                    break;
                 }
             }
-            0
+            sys::handle_close(sem);
+            if bad_rounds == 0 {
+                finished.fetch_add(1, Ordering::Release);
+                0
+            } else {
+                1
+            }
         })
         .map_err(|e| format!("spawn {e}"))?;
         handles.push(h);
     }
     let bad: i32 = handles.into_iter().map(|h| h.join()).sum();
-    ensure(bad == 0, || {
-        format!("{bad} of {THREADS} threads saw another's registers")
+    let finished = finished.load(Ordering::Acquire);
+    ensure(bad == 0 && finished == THREADS, || {
+        format!("{bad} of {THREADS} threads saw another's registers, {finished} finished")
     })
 }
 

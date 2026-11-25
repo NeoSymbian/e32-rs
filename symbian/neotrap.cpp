@@ -2,25 +2,29 @@
 // neotrap.cpp -- a TRAP keeps d8-d15 across a leave (NeoSymbian/docs user-side-smp.md US2). Code built with VFP (the
 // ARMv8 user side) keeps values in d8-d15, which the calling convention says a call preserves; a leave skips the
 // epilogues that would restore them, so its TRAP (NeoSymbian/build toolchain/overlay/e32cmn.h) traps through euser's
-// NeoTrapFp, which saves d8-d15 after the TTrap, and the leave puts them back. This program is built without VFP, so
-// the compiler never touches d8-d15 and the registers hold exactly what the assembly helpers put there. Built by
+// NeoTrapFp, which saves d8-d15 after the TTrap, and the leave puts them back. This file's own code uses core
+// registers only (the pragma below; the user side is built with VFP since US3), so the compiler never touches d8-d15
+// and the registers hold exactly what the assembly helpers put there. Built by
 // NeoSymbian/build from rust/neotrap.cpp with no Rust linked (manifest library `-`).
 #include <e32base.h>
 #include <e32debug.h>
+
+#pragma GCC target("general-regs-only")
 
 extern "C" TInt NeoTrapFp(TTrap* aThis, TInt& aResult) __attribute__((returns_twice));
 extern "C" TInt _ZN5TTrap4TrapERi(TTrap* aThis, TInt& aResult) __attribute__((returns_twice));	// TTrap::Trap
 struct TFrame { TTrap iTrap; TUint64 iFp[8]; };
 
-// ARM state: the Thumb of an ARMv5 build has no VFP instructions
-__attribute__((target("arm"), noinline)) static void LoadFp(const TUint64* aFrom)
+// No `.fpu` directive: it would stay in force for the rest of the generated assembly (the ARMv8 user side's -march
+// already allows VFP instructions in asm).
+__attribute__((noinline)) static void LoadFp(const TUint64* aFrom)
 	{
-	asm volatile(".fpu vfpv2\n\tvldmia %0, {d8-d15}" : : "r"(aFrom) : "memory");
+	asm volatile("vldmia %0, {d8-d15}" : : "r"(aFrom) : "memory");
 	}
 
-__attribute__((target("arm"), noinline)) static void StoreFp(TUint64* aTo)
+__attribute__((noinline)) static void StoreFp(TUint64* aTo)
 	{
-	asm volatile(".fpu vfpv2\n\tvstmia %0, {d8-d15}" : : "r"(aTo) : "memory");
+	asm volatile("vstmia %0, {d8-d15}" : : "r"(aTo) : "memory");
 	}
 
 static void Fill(TUint64* aRegs, TUint32 aSeed)
