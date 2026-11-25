@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/e32-sys", "crates/e32", "crates/rust-hello", "crates/neor1", "crates/neopanic", "crates/neotest", "crates/neoecho", "crates/neosrv", "crates/neowb1"]
+members = ["crates/e32-sys", "crates/e32", "crates/rust-hello", "crates/neor1", "crates/neopanic", "crates/neotest", "crates/neoecho", "crates/neosrv", "crates/neowb1", "crates/neocpu"]
 
 [workspace.package]
 edition = "2024"

@@ -13,6 +13,13 @@ pub const EHAL_GROUP_KERNEL: TInt = 0;
 pub const EKERNEL_HAL_NTICK_PERIOD: TInt = 11;
 /// `EKernelHalFastCounterFrequency` (`u32hal.h:412`): the fast counter's frequency in Hz.
 pub const EKERNEL_HAL_FAST_COUNTER_FREQUENCY: TInt = 10;
+/// `EKernelHalNumLogicalCpus`: the CPU count, as the return value (`sutils.cpp:2685`).
+pub const EKERNEL_HAL_NUM_LOGICAL_CPUS: TInt = 16;
+/// `EKernelHalLockThreadToCpu`: a1 = a CPU number, or [`KCPU_AFFINITY_ANY`]; pins the calling thread
+/// (`sutils.cpp:2715`, no capability needed).
+pub const EKERNEL_HAL_LOCK_THREAD_TO_CPU: TInt = 19;
+/// `KCpuAffinityAny` (`nkernsmp/nkern.h:820`): any CPU again.
+pub const KCPU_AFFINITY_ANY: u32 = 0xffff_ffff;
 /// `EHalGroupVariant` (`u32hal.h`): NeoSymbian's own functions are 0x4e00.. (kernel `a64_variant.cpp`).
 pub const EHAL_GROUP_VARIANT: TInt = 1;
 /// `ENeoHalPower`: a1 = 0 restart, 1 restart to fastboot, 2 power off; needs PowerMgmt. Returns only on a failure.
@@ -94,6 +101,34 @@ pub fn fast_counter_frequency() -> Result<TInt, TInt> {
         )
     };
     if r < 0 { Err(r) } else { Ok(hz) }
+}
+
+/// The number of CPUs the kernel runs (1 on a non-SMP kernel).
+pub fn num_logical_cpus() -> Result<TInt, TInt> {
+    // SAFETY: no pointers; the count is the return value.
+    let r = unsafe {
+        hal_function(
+            EHAL_GROUP_KERNEL,
+            EKERNEL_HAL_NUM_LOGICAL_CPUS,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        )
+    };
+    if r < 0 { Err(r) } else { Ok(r) }
+}
+
+/// Pin the calling thread to `cpu` ([`KCPU_AFFINITY_ANY`] unpins it); KErrArgument for a CPU the kernel doesn't run.
+pub fn lock_thread_to_cpu(cpu: u32) -> Result<(), TInt> {
+    // SAFETY: the kernel takes the CPU as a plain value in a1.
+    let r = unsafe {
+        hal_function(
+            EHAL_GROUP_KERNEL,
+            EKERNEL_HAL_LOCK_THREAD_TO_CPU,
+            cpu as *mut u8,
+            core::ptr::null_mut(),
+        )
+    };
+    if r < 0 { Err(r) } else { Ok(()) }
 }
 
 /// The nanokernel tick period in microseconds (`NTickCount` units).

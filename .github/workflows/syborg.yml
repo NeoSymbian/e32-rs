@@ -64,7 +64,7 @@ jobs:
           cargo test -p e32-sys -p e32
           cargo arm
           mkdir -p ../build/rust
-          cp target/armv8a-neosymbian-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv,libneowb1}.a ../build/rust/  # neowb1: its tests need the AArch64 kernel, so they run on virt only
+          cp target/armv8a-neosymbian-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv,libneowb1,libneocpu}.a ../build/rust/  # neowb1, neocpu: their tests need the AArch64 kernel, so they run on virt only
           cp symbian/exes.txt symbian/neocli.cpp symbian/neotrap.cpp ../build/rust/
 
       - name: Fetch the Symbian sources
@@ -90,7 +90,7 @@ jobs:
         working-directory: build
         run: KERNEL=src/oss.FCL.sf.os.kernelhwsrv ./neo kernel qemu
 
-      - name: On virt, run neohello, neor1, neopanic, neotest, neor1c (pushed to C:), neocli, neowb1 through fshell
+      - name: On virt, run neohello, neor1, neopanic, neotest, neor1c (pushed to C:), neocli, neowb1, neotrap, neocpu through fshell
         working-directory: build
         shell: bash
         run: |
@@ -99,7 +99,7 @@ jobs:
           K=$PWD/src/oss.FCL.sf.os.kernelhwsrv
           docker run --rm --user "$(id -u):$(id -g)" -v "$K:/kernel" -v "$PWD/../kernelhwsrv/baseport/arm64/tools:/tools:ro" \
             -v neosymbian-build:/vol:ro -e OUT=/kernel/out/ekern-qemu "$BUILD_IMAGE" python3 /tools/test-fshell-qemu.py 900 \
-            --cdrive /vol --run neohello --run neor1 --run neopanic --run neotest --run neor1c --run neocli --run neowb1 --run neotrap |
+            --cdrive /vol --run neohello --run neor1 --run neopanic --run neotest --run neor1c --run neocli --run neowb1 --run neotrap --run neocpu |
             tee out/virt.log
           cp "$K/out/ekern-qemu/serial.log" out/virt-serial.log
 
@@ -128,6 +128,9 @@ jobs:
           grep -a 'neowb1: 6 passed, 0 failed' $s
           # US2: a TRAP keeps d8-d15 across a leave (NeoTrapFp); virt only: the Syborg kernel has no VFP support
           grep -a 'neotrap: 4 passed, 0 failed' $s
+          # US6a: the AArch32 CRC32/AES/SHA instructions give the known answers on each of the 4 CPUs
+          grep -q '^test-fshell-qemu: run neocpu -> 0$' $v
+          grep -a 'neocpu: 4 cpus, 16 passed, 0 failed' $s
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
       - uses: actions/upload-artifact@v4

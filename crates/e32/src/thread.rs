@@ -95,3 +95,19 @@ impl Drop for JoinHandle {
         sys::handle_close(self.handle);
     }
 }
+
+/// How many CPUs the kernel runs (1 if it can't say).
+pub fn cpu_count() -> u32 {
+    sys::ui::num_logical_cpus().map_or(1, |n| n.max(1) as u32)
+}
+
+/// Pin the calling thread to `cpu` until [`unlock_cpu`]; the kernel moves it there before this returns.
+pub fn lock_to_cpu(cpu: u32) -> Result<(), i32> {
+    sys::ui::lock_thread_to_cpu(cpu)
+}
+
+/// Let the calling thread run on any CPU again.
+pub fn unlock_cpu() {
+    // KCpuAffinityAny is always accepted
+    let _ = sys::ui::lock_thread_to_cpu(sys::ui::KCPU_AFFINITY_ANY);
+}
