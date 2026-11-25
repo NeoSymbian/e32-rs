@@ -11,12 +11,15 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, Ordering};
 use linked_list_allocator::Heap;
 
-/// Address space reserved for the heap (committed lazily, so a bigger reserve costs no RAM). 64 MB: the UI server holds
+/// Address space reserved for the heap, committed lazily: a bigger reserve costs no heap pages, but the kernel sizes the
+/// chunk's page-array bookkeeping from the reservation, and the reservation must find that much contiguous address
+/// space at start-up (else the RUST-HEAP panic). 64 MB: the UI server holds
 /// two whole 1080x2160 screens during a fade (2 x 9.3 MB) besides Slint's own buffers; 16 MB left no room for the
 /// second (smooth-ui S2b on the Pixel).
 #[cfg(not(feature = "heap-256m"))]
 const RESERVE: usize = 64 << 20;
-/// `heap-256m`: for an app that decodes big pictures or 1080p video (Files: about 82 MB at 1080p H.264, FA12).
+/// `heap-256m`: for an app that decodes big pictures or 1080p video (Files: about 82 MB at 1080p H.264, FA12). Cargo
+/// unifies features: every EXE built in the same invocation as one asking for it gets it too.
 #[cfg(feature = "heap-256m")]
 const RESERVE: usize = 256 << 20;
 /// First commit, and the smallest growth step.
