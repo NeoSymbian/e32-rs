@@ -10,3 +10,4 @@ NEOSRV.EXE     0xE0001006  libneosrv.a
 NEOCLI.EXE     0xE0001007  -                  rust/neocli.cpp
 NEOWB1.EXE     0xE0001008  libneowb1.a
 NEOTRAP.EXE    0xE0001009  -                  rust/neotrap.cpp
+NEOCPU.EXE     0xE000100A  libneocpu.a

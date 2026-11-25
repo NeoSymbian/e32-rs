@@ -1,0 +1,15 @@
+[package]
+name = "neocpu"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "US6a on-target tests: AArch32 CRC32/AES/SHA known answers on every CPU (both Pixel clusters)"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+# the device part only; the known-answer code also runs on an Apple-silicon host (cargo test -p neocpu)
+[target.'cfg(target_arch = "arm")'.dependencies]
+e32.workspace = true
