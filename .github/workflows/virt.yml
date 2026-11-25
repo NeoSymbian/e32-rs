@@ -65,7 +65,7 @@ jobs:
           cargo arm
           mkdir -p ../build/rust
           cp target/armv8a-neosymbian-eabi/release/{librust_hello,libneor1,libneopanic,libneotest,libneosrv,libneowb1,libneocpu}.a ../build/rust/  # neowb1, neocpu: their tests need the AArch64 kernel, so they run on virt only
-          cp symbian/exes.txt symbian/neocli.cpp symbian/neotrap.cpp ../build/rust/
+          cp symbian/exes.txt symbian/neocli.cpp symbian/neotrap.cpp symbian/neobench.cpp ../build/rust/
 
       - name: Fetch the Symbian sources
         working-directory: build
@@ -90,7 +90,7 @@ jobs:
         working-directory: build
         run: KERNEL=src/oss.FCL.sf.os.kernelhwsrv ./neo kernel qemu
 
-      - name: On virt, run neohello, neor1, neopanic, neotest, neor1c (pushed to C:), neocli, neowb1, neotrap, neocpu through fshell
+      - name: On virt, run neohello, neor1, neopanic, neotest, neor1c (pushed to C:), neocli, neowb1, neotrap, neocpu, neobench through fshell
         working-directory: build
         shell: bash
         run: |
@@ -99,7 +99,7 @@ jobs:
           K=$PWD/src/oss.FCL.sf.os.kernelhwsrv
           docker run --rm --user "$(id -u):$(id -g)" -v "$K:/kernel" -v "$PWD/../kernelhwsrv/baseport/arm64/tools:/tools:ro" \
             -v neosymbian-build:/vol:ro -e OUT=/kernel/out/ekern-qemu "$BUILD_IMAGE" python3 /tools/test-fshell-qemu.py 900 \
-            --cdrive /vol --run neohello --run neor1 --run neopanic --run neotest --run neor1c --run neocli --run neowb1 --run neotrap --run neocpu |
+            --cdrive /vol --run neohello --run neor1 --run neopanic --run neotest --run neor1c --run neocli --run neowb1 --run neotrap --run neocpu --run neobench |
             tee out/virt.log
           cp "$K/out/ekern-qemu/serial.log" out/virt-serial.log
 
@@ -133,6 +133,11 @@ jobs:
           grep -a 'neocpu: 4 cpus, 16 passed, 0 failed' $s
           # each CPU's line comes from that CPU (the console prefixes every line with the CPU that wrote it): the pin held
           [ "$(grep -acE '^([0-9]):cpu \1: crc32 ok aes ok sha1 ok sha256 ok' $s)" = 4 ]
+          # the ARMv8-profile yardstick: on virt only its checks count (Mem::Crc32 against a bitwise reference, the
+          # contended runs finish); TCG timings mean nothing, the Pixel numbers are in docs user-side-smp.md
+          grep -q '^test-fshell-qemu: run neobench -> 0$' $v
+          grep -a 'neobench: crc ok' $s
+          grep -aE 'neobench: [0-9]+ passed, 0 failed' $s
           ! grep -aq 'K::Fault\|Kern::Fault' $s
 
       - uses: actions/upload-artifact@v4
