@@ -24,7 +24,7 @@ neocli: version_refused ... ok        (NEOCLI.EXE: plain C++ RProcess/RSessionBa
 neocli: add / reverse8 / upper16 / write_at / overflow / unknown_function / session_count ... ok
 neosrv: done                          (NEOSRV.EXE, the Rust server, exits when its last session closes)
 neocli: server exited Kill 0
-neocli: 9 passed, 0 failed
+neocli: 10 passed, 0 failed
 ```
 
 `TIpcArgs` borrows the descriptors it points at, so a descriptor that dies before the send is a compile error.

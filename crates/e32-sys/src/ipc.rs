@@ -116,6 +116,23 @@ pub fn session_server_sid(session: TInt) -> Result<u32, TInt> {
     if r < 0 { Err(r) } else { Ok(info[0]) }
 }
 
+/// `Exec::MessageSecurityInfo(TInt aMessage, SSecurityInfo&)`: the security info of the process that sent `msg`
+/// (`RMessagePtr2::SecureId`, `us_secure.cpp`); the secure ID is word 0. The kernel returns nothing: a bad handle
+/// panics the caller, as every message exec does.
+pub fn message_security_info(msg: TInt) -> [u32; 4] {
+    let mut info = [0u32; 4];
+    // SAFETY: `info` is 16 writable bytes, the size of SSecurityInfo.
+    unsafe {
+        crate::swi::exec4::<{ crate::execs::slow::MESSAGE_SECURITY_INFO }>(
+            msg as u32,
+            info.as_mut_ptr() as u32,
+            0,
+            0,
+        )
+    };
+    info
+}
+
 /// `TVersion` (`e32cmn.h`) `{ TInt8 major, TInt8 minor, TInt16 build }` packed into one word, as `CreateSession`
 /// sends it in the connect message.
 #[derive(Clone, Copy, Debug)]

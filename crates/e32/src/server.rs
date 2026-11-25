@@ -225,6 +225,12 @@ impl Message {
         ipc::message_open_object(self.raw.i_handle, ipc::EOBJECT_SESSION, param as i32)
     }
 
+    /// The secure ID of the client's process (`RMessagePtr2::SecureId`): its EXE's UID3, set by the kernel, so a
+    /// server can tell who sent the message.
+    pub fn client_sid(&self) -> u32 {
+        ipc::message_security_info(self.raw.i_handle)[0]
+    }
+
     /// Reply to the client: `reason` becomes its request's completion value.
     pub fn complete(mut self, reason: i32) {
         ipc::message_complete(self.raw.i_handle, reason);
