@@ -176,6 +176,8 @@ static TUint64 Contended(TLoop aLoop, TInt aCpus)
 	RThread t[KMaxCpus];
 	TRequestStatus done[KMaxCpus];
 	TArgs args[KMaxCpus];
+	static TInt run;					// thread names unique per run: a closed thread's name can outlive Close()
+	++run;
 	TInt n = 0;
 	gGo = 0;
 	for (; n < aCpus; ++n)
@@ -183,7 +185,7 @@ static TUint64 Contended(TLoop aLoop, TInt aCpus)
 		args[n].iCpu = n;
 		args[n].iLoop = aLoop;
 		TBuf<16> name;
-		name.Format(_L("neobench%d"), n);
+		name.Format(_L("nb%d.%d"), run, n);
 		if (t[n].Create(name, ContendedThread, 0x2000, &User::Allocator(), &args[n]) != KErrNone)
 			break;
 		TRequestStatus rv;
