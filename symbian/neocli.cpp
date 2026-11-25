@@ -10,7 +10,7 @@
 _LIT(KServerName, "NeoEcho");
 _LIT(KServerExe, "neosrv");
 
-enum TEchoOp { EAdd = 1, EReverse8, EUpper16, EWriteAt, ECount };
+enum TEchoOp { EAdd = 1, EReverse8, EUpper16, EWriteAt, ECount, EShare, ESid };
 
 class RNeoEcho : public RSessionBase
 	{
@@ -76,6 +76,9 @@ static void RunChecks(RNeoEcho& aEcho)
 
 	r = aEcho.Call(ECount, TIpcArgs());
 	Check(r == 7, "session_count", r); // add, reverse8, upper16, write_at x2, 99, count
+
+	r = aEcho.Call(ESid, TIpcArgs());
+	Check(r == (TInt)0xE0001007, "client_sid", r); // NEOCLI.EXE's UID3 (exes.txt), as the kernel reports it
 	}
 
 GLDEF_C TInt E32Main()

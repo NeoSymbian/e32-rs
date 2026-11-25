@@ -8,6 +8,7 @@
 //! - `UPPER16(DesC16 in, Des16 out)` writes `in` with ASCII letters upper-cased into `out`, completes with its length.
 //! - `WRITE_AT(Des8 out, int offset)` writes `"xyz"` into `out` at `offset`: 0, or `KErrOverflow` past its capacity.
 //! - `COUNT()` completes with the number of requests on this session so far, itself included.
+//! - `SID()` completes with the client process's secure ID (`Message::client_sid`).
 //! - `SHARE(handle fs, int file, Des8 back, Des8 seen)` adopts the client's file (`File::transfer_to_server` into slots
 //!   0 and 1), writes its first 64 bytes into `seen`, then hands the same file back (`SharedFile::transfer_to_client`
 //!   into `back`): the request completes with a file-server session handle. Rust clients only.
@@ -37,6 +38,7 @@ pub mod op {
     pub const WRITE_AT: i32 = 4;
     pub const COUNT: i32 = 5;
     pub const SHARE: i32 = 6;
+    pub const SID: i32 = 7;
 }
 
 #[derive(Default)]
@@ -81,6 +83,7 @@ impl Service for Echo {
             }),
             op::WRITE_AT => m.write8(0, b"xyz", m.int(1) as usize).map(|()| 0),
             op::COUNT => Ok(s.requests),
+            op::SID => Ok(m.client_sid() as i32),
             _ => Err(err::KERR_NOT_SUPPORTED),
         };
         m.complete(r.unwrap_or_else(|e| e));
