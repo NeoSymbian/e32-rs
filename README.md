@@ -14,7 +14,7 @@ The full plan is in [rust-integration.md](https://github.com/NeoSymbian/docs/blo
 **R3 is done: IPC servers in Rust.** `e32::server` is the Rust `CServer2`: `Server::create`, an async
 `receive`, `Message` (read and write the client's 8- and 16-bit descriptors, complete exactly once, panic a bad
 client), and `serve` over a `Service` trait (connect with version check, per-session state, disconnect). Tested both
-ways on QEMU Syborg:
+ways on QEMU (first on Syborg, on `virt` with our AArch64 kernel since 2026-11-21):
 
 ```
 test fs_dirs ... ok         (drives, C: volume size, Z:\sys\bin listed; on C: mkdir, list, rename, delete, rmdir)
@@ -35,7 +35,7 @@ neocli: 9 passed, 0 failed
 - threads, mutexes and semaphores;
 - client-server IPC, with a Rust file-server client.
 
-They also load from the C: drive, not only the ROM. The on-device suite `NEOTEST.EXE`, on QEMU Syborg:
+They also load from the C: drive, not only the ROM. The on-device suite `NEOTEST.EXE` (first run on QEMU Syborg; CI runs it on `virt`):
 
 ```
 test alloc ... ok          (Vec, String, Box, and a 2 MB block, so the heap grew past its first 64 KB)
@@ -48,7 +48,7 @@ neotest: 6 passed, 0 failed
 ```
 
 R1 (`NEOR1.EXE` exits 42; `NEOPANIC.EXE` panics with category `RUST`) and R0 (`NEOHELLO.EXE`) still run.
-`NEOR1C.EXE` is `neor1` installed on C:. Next is **R5**, the Rust UI server (neoui) on Syborg.
+`NEOR1C.EXE` is `neor1` installed on C:. **R5**, the Rust UI server, followed in NeoSymbian/neoui.
 
 ## Crates
 
@@ -78,7 +78,7 @@ cargo test -p e32-sys -p e32      # host unit tests
 python3 tools/gen_execs.py ../oss.FCL.sf.os.kernelhwsrv/kernel/eka/kernel/execs.txt   # regenerate execs.rs
 ```
 
-To run them on QEMU `virt` (needs Docker; the CI in `.github/workflows/syborg.yml`, name kept, does exactly this):
+To run them on QEMU `virt` (needs Docker; the CI in `.github/workflows/virt.yml` does exactly this):
 
 ```sh
 git clone https://github.com/NeoSymbian/build && cd build

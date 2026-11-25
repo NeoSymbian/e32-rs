@@ -1,4 +1,4 @@
-name: syborg
+name: virt
 
 # Build the Rust staticlibs, link them into Symbian EXEs with NeoSymbian/build, boot the ROM's user side on QEMU virt
 # with our AArch64 kernel, run the EXEs through fshell and check their exit statuses and output.
@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  syborg:
+  virt:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -138,7 +138,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: syborg
+          name: virt
           path: |
             build/out/log/
             build/out/virt.log
