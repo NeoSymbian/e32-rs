@@ -82,7 +82,7 @@ To run them on QEMU `virt` (needs Docker; the CI in `.github/workflows/virt.yml`
 
 ```sh
 git clone https://github.com/NeoSymbian/build && cd build
-mkdir -p rust && cp ../e32-rs/target/armv8a-neosymbian-eabi/release/lib*.a ../e32-rs/symbian/{exes.txt,neocli.cpp,neotrap.cpp} rust/
+mkdir -p rust && cp ../e32-rs/target/armv8a-neosymbian-eabi/release/lib*.a ../e32-rs/symbian/{exes.txt,neocli.cpp,neotrap.cpp,neobench.cpp} rust/
 ./neo fetch && ./neo rom && ./neo kernel qemu
 python3 ../kernel/baseport/arm64/tools/test-fshell-qemu.py 900 --cdrive "$BUILD_VOLUME" --run neohello --run neotest --run neowb1
 ```
