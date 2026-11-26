@@ -13,6 +13,8 @@ critical-section = { version = "1.2", optional = true }
 [features]
 # a `critical-section` implementation (a kernel mutex) for dependencies that need one, e.g. Slint
 critical-section = ["dep:critical-section"]
+# reserve 256 MB of address space for the heap instead of 64 MB (committed lazily either way)
+heap-256m = []
 
 # the heap behind `alloc` exists only on the Symbian target
 [target.'cfg(target_arch = "arm")'.dependencies]
