@@ -7,7 +7,7 @@ inside functions, soft-float calling convention (`targets/armv8a-neosymbian-eabi
 They run on the Google Pixel 3a XL and on QEMU `virt`, both under the
 [AArch64 kernel](https://github.com/NeoSymbian/kernel), through [NeoSymbian/build](https://github.com/NeoSymbian/build).
 
-The full plan is in [rust-integration.md](https://github.com/NeoSymbian/docs/blob/main/rust-integration.md).
+The full plan is in [rust-integration.md](https://github.com/NeoSymbian/docs/blob/main/user-side/rust-integration.md).
 
 ## Status
 
