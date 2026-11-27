@@ -231,6 +231,25 @@ impl Message {
         ipc::message_security_info(self.raw.i_handle)[0]
     }
 
+    /// The kernel ID of the client's process (`RMessagePtr2::Client(thread).Process().Id()`): which process, not only
+    /// which EXE, sent the message. A server that started the process ([`crate::process::Process::id`]) can tell two
+    /// processes with the same secure ID apart.
+    pub fn client_process_id(&self) -> Result<u32, i32> {
+        const EOWNER_THREAD: u32 = 1;
+        let thread = ipc::message_client(self.raw.i_handle, EOWNER_THREAD);
+        if thread < 0 {
+            return Err(thread);
+        }
+        let process = sys::thread_process(thread);
+        sys::handle_close(thread);
+        if process < 0 {
+            return Err(process);
+        }
+        let id = sys::process_id(process);
+        sys::handle_close(process);
+        Ok(id)
+    }
+
     /// Reply to the client: `reason` becomes its request's completion value.
     pub fn complete(mut self, reason: i32) {
         ipc::message_complete(self.raw.i_handle, reason);

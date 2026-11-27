@@ -426,6 +426,20 @@ pub fn process_exit_reason(handle: TInt) -> TInt {
     unsafe { exec4::<{ slow::PROCESS_EXIT_REASON }>(handle as u32, 0, 0, 0) as TInt }
 }
 
+/// `Exec::ProcessId(TInt aHandle)` (`sexec.cpp:158`): the process's kernel ID (`RProcess::Id`), unique while the
+/// system runs.
+pub fn process_id(handle: TInt) -> u32 {
+    // SAFETY: plain integer.
+    unsafe { exec4::<{ slow::PROCESS_ID }>(handle as u32, 0, 0, 0) }
+}
+
+/// `Exec::ThreadProcess(TInt aThreadHandle)` (`sexec.cpp:1291`): a new thread-owned handle to the thread's process
+/// (`RThread::Process`), or an error. Close it with [`handle_close`].
+pub fn thread_process(thread: TInt) -> TInt {
+    // SAFETY: plain integer.
+    unsafe { exec4::<{ slow::THREAD_PROCESS }>(thread as u32, 0, 0, 0) as TInt }
+}
+
 /// `Exec::SetUTCTimeAndOffset(const TInt64& aUtc, TInt aOffset, TUint aMode, TUint aChanges)` (`stimer.cpp:1675`) with
 /// mode `ETimeSetTime | ETimeSetOffset` (`u32std.h:105`): sets both. Needs WriteDeviceData (else a platsec panic).
 pub fn set_utc_time_and_offset(utc: i64, offset: TInt) -> TInt {

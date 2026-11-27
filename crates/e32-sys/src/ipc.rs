@@ -116,6 +116,15 @@ pub fn session_server_sid(session: TInt) -> Result<u32, TInt> {
     if r < 0 { Err(r) } else { Ok(info[0]) }
 }
 
+/// `Exec::MessageClient(TInt aMessage, TOwnerType)` (`sipc.cpp:2010`): a new handle to the thread that sent `msg`
+/// (`RMessagePtr2::Client`; owner 0 process, 1 thread), or an error. Close it with `handle_close`.
+pub fn message_client(msg: TInt, owner: u32) -> TInt {
+    // SAFETY: plain integers; the kernel checks the message handle.
+    unsafe {
+        crate::swi::exec4::<{ crate::execs::slow::MESSAGE_CLIENT }>(msg as u32, owner, 0, 0) as TInt
+    }
+}
+
 /// `Exec::MessageSecurityInfo(TInt aMessage, SSecurityInfo&)`: the security info of the process that sent `msg`
 /// (`RMessagePtr2::SecureId`, `us_secure.cpp`); the secure ID is word 0. The kernel returns nothing: a bad handle
 /// panics the caller, as every message exec does.

@@ -62,6 +62,12 @@ const KCURRENT_POSITION: i32 = -1;
 const EFS_FILE_DUPLICATE: i32 = 96;
 const EFS_FILE_ADOPT: i32 = 97;
 const EFS_FILE_FULL_NAME: i32 = 105;
+const EFS_FILE_SYSTEM_NAME: i32 = 74;
+const EFS_QUERY_VOLUME_INFO_EXT: i32 = 127;
+/// `TQueryVolumeInfoExtCmd::EFileSystemSubType`.
+const EFILE_SYSTEM_SUB_TYPE: i32 = 0;
+/// `KMaxFSNameLength`: a `TFSName`'s capacity.
+const KMAX_FS_NAME: usize = 32;
 /// `TFsFileAdopt` modes (`inc/f32file_private.h:102`): adopt as a 32-bit `RFile` (not `RFile64`).
 const KFILE_ADOPT32: i32 = 0;
 /// The file server's secure ID (`KFileServerUidValue`), what `KFileServerPolicy` checks a passed session against.
@@ -219,6 +225,8 @@ pub struct Volume {
     /// [`drive_att`] bits.
     pub drive_att: u32,
     pub media_att: u32,
+    /// `iUniqueID`: changes when the volume is formatted or another medium is mounted.
+    pub unique_id: u32,
     pub size: i64,
     pub free: i64,
     pub name: String,
@@ -238,11 +246,19 @@ impl Volume {
             media: u32_at(b, 0),
             drive_att: u32_at(b, 8),
             media_att: u32_at(b, 12),
+            unique_id: u32_at(b, 20),
             size: i64_at(b, 24),
             free: i64_at(b, 32),
             name: text_at(b, 44, n),
         })
     }
+}
+
+/// The name in a `TPckgBuf<TFSName>` (`TBuf16<32>`: length word, max-length word, 32 UTF-16 units), as
+/// `EFsQueryVolumeInfoExt` writes it.
+pub fn parse_fs_name_pckg(b: &[u8]) -> Option<String> {
+    let n = (u32_at(b.get(..4)?, 0) & 0x0FFF_FFFF) as usize;
+    (n <= KMAX_FS_NAME && b.len() >= 8 + 2 * n).then(|| text_at(b, 8, n))
 }
 
 /// A drive (`TDriveInfo`, `f32file.h:1503-1556`): 20 bytes, also the first 20 of [`Volume`]'s `TVolumeInfo`.
@@ -333,6 +349,32 @@ impl Fs {
         self.session.send_receive(EFS_DRIVE, &a)?;
         let n = d.len();
         DriveInfo::decode(&buf[..n]).ok_or(err::KERR_GENERAL)
+    }
+
+    /// The file system mounted on drive `drive` (0 = A:): `Fat`, `Rom`, `Rofs`, `Composite`… (`RFs::FileSystemName`,
+    /// `sf_sys.cpp:905-942`). A drive with none gives `KErrNotFound`.
+    pub fn file_system_name(&self, drive: i32) -> Result<String, i32> {
+        let mut buf = [0u16; KMAX_FS_NAME];
+        let mut d = TPtr16::new(&mut buf);
+        let mut a = TIpcArgs::new();
+        a.des16(0, &mut d).int(1, drive).int(2, -1);
+        self.session.send_receive(EFS_FILE_SYSTEM_NAME, &a)?;
+        let n = d.len();
+        Ok(String::from_utf16_lossy(&buf[..n]))
+    }
+
+    /// The mounted file system's sub type (`FAT12`, `FAT16`, `FAT32`), or its name when it has none (`Rom`,
+    /// `Composite`…): `RFs::FileSystemSubType` (`cl_cli.cpp:3754`; `sf_svr.cpp:1167-1195`). Needs a mounted volume.
+    pub fn file_system_sub_type(&self, drive: i32) -> Result<String, i32> {
+        let mut buf = [0u8; 8 + 2 * KMAX_FS_NAME];
+        let mut d = TPtr8::new_full(&mut buf);
+        let mut a = TIpcArgs::new();
+        a.int(0, drive)
+            .int(1, EFILE_SYSTEM_SUB_TYPE)
+            .des8(2, &mut d);
+        self.session.send_receive(EFS_QUERY_VOLUME_INFO_EXT, &a)?;
+        let n = d.len();
+        parse_fs_name_pckg(&buf[..n]).ok_or(err::KERR_GENERAL)
     }
 
     /// Set drive `drive`'s volume label, at most [`VOLUME_LABEL_MAX`] characters (`RFs::SetVolumeLabel`,
@@ -993,6 +1035,7 @@ mod tests {
         let mut b = vec![0u8; VOLUME_INFO_SIZE];
         b[0..4].copy_from_slice(&6u32.to_le_bytes()); // flash
         b[8..12].copy_from_slice(&(drive_att::INTERNAL | 1).to_le_bytes());
+        b[20..24].copy_from_slice(&0x1234_5678u32.to_le_bytes());
         b[24..32].copy_from_slice(&(3i64 << 30).to_le_bytes());
         b[32..40].copy_from_slice(&(1i64 << 30).to_le_bytes());
         b[40..44].copy_from_slice(&4u32.to_le_bytes());
@@ -1005,6 +1048,7 @@ mod tests {
             (6, 0x11, 3 << 30, 1 << 30)
         );
         assert_eq!(v.name, "DATA");
+        assert_eq!(v.unique_id, 0x1234_5678);
         assert_eq!(Volume::decode(&b[..43]), None);
         assert_eq!(Volume::decode(&b[..47]), None); // label cut short
     }
@@ -1051,6 +1095,24 @@ mod tests {
             ),
             (96, 96, 97, 105)
         );
+        // EFsFileSystemName 74, EFsQueryVolumeInfoExt 127 (the same count)
+        assert_eq!((EFS_FILE_SYSTEM_NAME, EFS_QUERY_VOLUME_INFO_EXT), (74, 127));
+    }
+
+    #[test]
+    fn fs_name_package() {
+        // TPckgBuf<TFSName>("FAT32"): length | EBuf << 28, max 32, then the units (the rest unwritten)
+        let mut b = alloc::vec![0xAAu8; 8 + 64];
+        b[0..4].copy_from_slice(&(5u32 | 3 << 28).to_le_bytes());
+        b[4..8].copy_from_slice(&32u32.to_le_bytes());
+        for (i, u) in "FAT32".encode_utf16().enumerate() {
+            b[8 + 2 * i..10 + 2 * i].copy_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(parse_fs_name_pckg(&b).as_deref(), Some("FAT32"));
+        assert_eq!(parse_fs_name_pckg(&b[..17]), None); // cut short
+        assert_eq!(parse_fs_name_pckg(&b[..3]), None);
+        b[0..4].copy_from_slice(&33u32.to_le_bytes()); // longer than a TFSName holds
+        assert_eq!(parse_fs_name_pckg(&b), None);
     }
 
     #[test]
