@@ -94,6 +94,12 @@ impl Process {
         sys::process_kill(self.handle, sys::TExitType::Kill, reason);
     }
 
+    /// Its kernel ID (`RProcess::Id`), as [`crate::server::Message::client_process_id`] reports it for the messages it
+    /// sends.
+    pub fn id(&self) -> u32 {
+        sys::process_id(self.handle)
+    }
+
     /// `None` while it runs, else `(exit type, reason)` — type 0 Kill, 1 Terminate, 2 Panic.
     pub fn exit_info(&self) -> Option<(i32, i32)> {
         match sys::process_exit_type(self.handle) {
