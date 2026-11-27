@@ -20,6 +20,17 @@ impl Session {
     /// Connect to the server named `name` (ASCII) on the global message pool, sending `version` as
     /// `RSessionBase::CreateSession` does.
     pub fn connect(name: &str, version: TVersion) -> Result<Self, i32> {
+        Self::connect_inner(name, version, None)
+    }
+
+    /// `connect`, but only to the server whose process has secure ID `server_sid`: any process may register a free
+    /// server name, so a client that sends secrets (a PIN) checks who it reached (`TSecurityPolicy::CheckPolicy`) before
+    /// sending anything, even the connect message. Another owner gives KErrPermissionDenied and the handle is closed.
+    pub fn connect_checked(name: &str, version: TVersion, server_sid: u32) -> Result<Self, i32> {
+        Self::connect_inner(name, version, Some(server_sid))
+    }
+
+    fn connect_inner(name: &str, version: TVersion, server_sid: Option<u32>) -> Result<Self, i32> {
         let n = TPtrC8::new(name.as_bytes());
         let h = ipc::session_create(&n, -1);
         if h < 0 {
@@ -29,6 +40,9 @@ impl Session {
             handle: h,
             _thread_bound: PhantomData,
         };
+        if let Some(want) = server_sid {
+            check_sid(ipc::session_server_sid(h), want)?; // on error `s` drops and closes the handle
+        }
         let mut a = TIpcArgs::new();
         a.int(0, version.packed());
         s.send_receive(ipc::ECONNECT, &a)?; // on error `s` drops and closes the handle
@@ -65,11 +79,8 @@ impl Session {
             handle,
             _thread_bound: PhantomData,
         };
-        match ipc::session_server_sid(handle) {
-            Ok(sid) if sid == server_sid => Ok(s),
-            Ok(_) => Err(sys::err::KERR_PERMISSION_DENIED),
-            Err(e) => Err(e),
-        }
+        check_sid(ipc::session_server_sid(handle), server_sid)?;
+        Ok(s)
     }
 
     /// Make this session usable by other processes, as a protected object (`RSessionBase::ShareProtected`): the
@@ -78,6 +89,15 @@ impl Session {
     pub fn share_protected(&mut self) -> Result<(), i32> {
         let r = ipc::session_share(&mut self.handle, ipc::EIPC_SESSION_GLOBAL_SHARABLE);
         if r < 0 { Err(r) } else { Ok(()) }
+    }
+}
+
+/// The server's secure ID (or the error reading it) checked against the one wanted.
+fn check_sid(got: Result<u32, i32>, want: u32) -> Result<(), i32> {
+    match got {
+        Ok(sid) if sid == want => Ok(()),
+        Ok(_) => Err(sys::err::KERR_PERMISSION_DENIED),
+        Err(e) => Err(e),
     }
 }
 
@@ -147,5 +167,20 @@ impl Drop for Session {
     fn drop(&mut self) {
         // The kernel sends the disconnect message; the server cleans up the session's subsessions.
         sys::handle_close(self.handle);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_sid_accepts_only_the_wanted_server() {
+        assert_eq!(check_sid(Ok(0xE000_3001), 0xE000_3001), Ok(()));
+        assert_eq!(
+            check_sid(Ok(0xE000_9999), 0xE000_3001),
+            Err(sys::err::KERR_PERMISSION_DENIED)
+        );
+        assert_eq!(check_sid(Err(-15), 0xE000_3001), Err(-15)); // KErrServerTerminated passes through
     }
 }

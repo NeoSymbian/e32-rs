@@ -295,6 +295,13 @@ pub trait Service {
     /// A client connects with `version`: return its session state, or an error to refuse (e.g. `KErrNotSupported`).
     fn connect(&mut self, version: TVersion) -> Result<Self::Session, i32>;
 
+    /// [`Service::connect`] with the connecting process's secure ID ([`Message::client_sid`] of the connect message),
+    /// for a server that limits sessions per client. By default the SID is ignored.
+    fn connect_from(&mut self, version: TVersion, sid: u32) -> Result<Self::Session, i32> {
+        let _ = sid;
+        self.connect(version)
+    }
+
     /// A request on `session`. Complete `msg` now or keep it for a later reply — but complete every message of a
     /// session before that session's [`Service::disconnect`] returns.
     fn message(&mut self, session: &mut Self::Session, msg: Message);
@@ -329,13 +336,15 @@ pub fn dispatch<S: Service>(service: &mut S, msg: Message) -> ControlFlow<()> {
         ipc::ECONNECT if !cookie.is_null() => {
             msg.panic_client(BAD_CLIENT_CATEGORY, BAD_CLIENT_RECONNECT)
         }
-        ipc::ECONNECT => match service.connect(TVersion::from_packed(msg.int(0))) {
-            Ok(s) => {
-                ipc::set_session_ptr(msg.raw.i_handle, Box::into_raw(Box::new(s)) as usize);
-                msg.complete(err::KERR_NONE);
+        ipc::ECONNECT => {
+            match service.connect_from(TVersion::from_packed(msg.int(0)), msg.client_sid()) {
+                Ok(s) => {
+                    ipc::set_session_ptr(msg.raw.i_handle, Box::into_raw(Box::new(s)) as usize);
+                    msg.complete(err::KERR_NONE);
+                }
+                Err(e) => msg.complete(e),
             }
-            Err(e) => msg.complete(e),
-        },
+        }
         // Sent for every session that closes, connected or not; the reason is ignored.
         ipc::EDISCONNECT => {
             let flow = if cookie.is_null() {
